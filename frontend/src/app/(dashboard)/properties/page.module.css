@@ -1,0 +1,376 @@
+.container {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 16px;
+}
+
+.headerTitle h2 {
+  font-size: 1.75rem;
+  color: var(--text-main);
+  margin: 0 0 6px;
+  font-weight: 700;
+}
+
+.headerTitle p {
+  margin: 0;
+  color: var(--text-muted);
+}
+
+.actions {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.error {
+  border-radius: var(--radius-md);
+  border: 1px solid color-mix(in oklab, var(--danger) 25%, transparent);
+  background: var(--danger-bg);
+  color: var(--danger-text);
+  padding: 10px 14px;
+  font-size: 0.875rem;
+}
+
+.tableCard {
+  padding: 0 !important;
+  overflow: hidden;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.table th {
+  text-align: left;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--border-color);
+  background: var(--bg-card-hover);
+}
+
+.table td {
+  padding: 16px 18px;
+  border-bottom: 1px solid var(--border-color-light);
+  font-size: 0.875rem;
+  color: var(--text-main);
+}
+
+.table tr:last-child td {
+  border-bottom: none;
+}
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--border-color);
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  background: var(--bg-main);
+}
+
+.actionRow {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.smallBtn {
+  border: 1px solid var(--border-color);
+  background: transparent;
+  color: var(--text-main);
+  border-radius: var(--radius-sm);
+  padding: 6px 10px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.smallBtn:hover {
+  background: var(--bg-card-hover);
+}
+
+.dangerBtn {
+  color: var(--danger);
+}
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: 1fr 1fr;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.span2 {
+  grid-column: span 2;
+}
+
+.field label {
+  font-size: 0.8125rem;
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.field input,
+.field select {
+  border: 1px solid var(--border-color);
+  background: var(--bg-main);
+  color: var(--text-main);
+  border-radius: var(--radius-md);
+  padding: 10px 12px;
+  font-size: 0.875rem;
+}
+
+.field input:focus,
+.field select:focus {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px var(--primary-light);
+}
+
+.switchRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.loading {
+  padding: 42px;
+  text-align: center;
+  color: var(--text-muted);
+}
+
+.loadingInline {
+  padding: 24px;
+  text-align: center;
+  color: var(--text-muted);
+}
+
+.unitOverview {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.overviewTop {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: flex-start;
+}
+
+.overviewTop h3 {
+  margin: 0;
+  font-size: 1.1rem;
+}
+
+.overviewTop p {
+  margin: 4px 0 0;
+  color: var(--text-muted);
+  font-size: 0.85rem;
+}
+
+.statusBadge {
+  border: 1px solid var(--border-color);
+  background: var(--bg-main);
+  border-radius: var(--radius-full);
+  padding: 5px 10px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: capitalize;
+}
+
+.overviewStats {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.infoCard {
+  border: 1px solid var(--border-color);
+  background: var(--bg-main);
+  border-radius: var(--radius-md);
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.infoCard span {
+  color: var(--text-muted);
+  font-size: 0.75rem;
+}
+
+.infoCard strong {
+  font-size: 0.9rem;
+}
+
+.overviewActions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.toolBtn {
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: var(--bg-card);
+  color: var(--text-main);
+  padding: 10px;
+  cursor: pointer;
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.8125rem;
+  font-weight: 600;
+}
+
+.toolBtn:hover {
+  background: var(--bg-card-hover);
+}
+
+.toolBtn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.actionMessage {
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-color);
+  background: var(--bg-main);
+  color: var(--text-main);
+  font-size: 0.8125rem;
+  padding: 10px 12px;
+}
+
+.historyList {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 58vh;
+  overflow-y: auto;
+}
+
+.historyRow {
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: var(--bg-main);
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.historyMain {
+  display: grid;
+  grid-template-columns: 1.1fr 1fr auto;
+  gap: 8px;
+  align-items: center;
+  font-size: 0.82rem;
+}
+
+.historyMain span {
+  color: var(--text-muted);
+}
+
+.historyMeta {
+  display: grid;
+  grid-template-columns: auto auto 1fr;
+  gap: 8px;
+  align-items: center;
+  font-size: 0.75rem;
+}
+
+.historyStatus {
+  border-radius: var(--radius-full);
+  border: 1px solid var(--border-color);
+  padding: 3px 8px;
+  width: fit-content;
+  text-transform: capitalize;
+}
+
+.statusPaid {
+  background: var(--success-bg);
+  color: var(--success-text);
+  border-color: color-mix(in oklab, var(--success) 35%, transparent);
+}
+
+.statusOverdue {
+  background: var(--danger-bg);
+  color: var(--danger-text);
+  border-color: color-mix(in oklab, var(--danger) 35%, transparent);
+}
+
+.statusPending {
+  background: var(--warning-bg);
+  color: var(--warning-text);
+  border-color: color-mix(in oklab, var(--warning) 35%, transparent);
+}
+
+.historyCheckbox {
+  justify-self: end;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+}
+
+.dimmed {
+  justify-self: end;
+  color: var(--text-muted);
+}
+
+@media (max-width: 900px) {
+  .header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .grid {
+    grid-template-columns: 1fr;
+  }
+
+  .span2 {
+    grid-column: span 1;
+  }
+
+  .overviewStats,
+  .overviewActions {
+    grid-template-columns: 1fr;
+  }
+
+  .historyMain,
+  .historyMeta {
+    grid-template-columns: 1fr;
+  }
+
+  .historyCheckbox,
+  .dimmed {
+    justify-self: start;
+  }
+}

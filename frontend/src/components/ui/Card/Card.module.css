@@ -1,0 +1,9 @@
+.card {
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+}
+
+.noPadding {
+  padding: 0;
+}

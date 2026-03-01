@@ -1,0 +1,14 @@
+# Backend
+backend/realstate_api
+backend/data/*.db
+backend/generated/*.pdf
+backend/generated/*.csv
+
+# Frontend
+frontend/node_modules
+frontend/.next
+frontend/out
+
+# Shared
+*.log
+.DS_Store

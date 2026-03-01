@@ -1,0 +1,182 @@
+.container {
+  display: flex;
+  flex-direction: column;
+  gap: 32px;
+}
+
+.header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+}
+
+.headerTitle {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.headerTitle h2 {
+  font-size: 1.75rem;
+  color: var(--text-main);
+  margin: 0;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.headerTitle p {
+  color: var(--text-muted);
+  font-size: 1rem;
+  margin: 0;
+}
+
+.headerActions {
+  display: flex;
+  gap: 12px;
+}
+
+.exportBtn {
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  color: var(--text-main);
+  padding: 10px 16px;
+  border-radius: var(--radius-md);
+  font-weight: 600;
+  font-size: 0.875rem;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.exportBtn:hover {
+  background: var(--bg-card-hover);
+  border-color: var(--primary-light);
+}
+
+.exportBtnPrimary {
+  background: var(--primary);
+  border: 1px solid var(--primary);
+  color: white;
+  padding: 10px 16px;
+  border-radius: var(--radius-md);
+  font-weight: 600;
+  font-size: 0.875rem;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  box-shadow: 0 2px 8px rgba(99, 102, 241, 0.25);
+}
+
+.exportBtnPrimary:hover {
+  background: var(--primary-hover);
+  box-shadow: 0 4px 12px rgba(99, 102, 241, 0.35);
+  transform: translateY(-1px);
+}
+
+.statsGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 24px;
+}
+
+.mainContent {
+  display: grid;
+  grid-template-columns: 2fr 1fr;
+  gap: 24px;
+}
+
+@media (max-width: 1024px) {
+  .mainContent {
+    grid-template-columns: 1fr;
+  }
+}
+
+.chartSection {
+  display: flex;
+  flex-direction: column;
+}
+
+.sideSection {
+  display: flex;
+  flex-direction: column;
+}
+
+.breakdownCard {
+  background: var(--bg-card);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-card);
+  border: 1px solid var(--border-color);
+  padding: 32px;
+  height: 100%;
+  transition: all var(--transition-smooth);
+  display: flex;
+  flex-direction: column;
+}
+
+.breakdownCard:hover {
+  box-shadow: var(--shadow-card-hover);
+}
+
+.breakdownTitle {
+  font-size: 1.25rem;
+  color: var(--text-main);
+  margin-bottom: 24px;
+}
+
+.expenseList {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  flex: 1;
+}
+
+.expenseItem {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--border-color-light);
+}
+
+.expenseItem:last-child {
+  border-bottom: none;
+}
+
+.expenseInfo {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.expenseDot {
+  width: 12px;
+  height: 12px;
+  border-radius: 4px;
+}
+
+.expenseLabel {
+  color: var(--text-main);
+  font-weight: 500;
+  font-size: 0.9375rem;
+}
+
+.expenseAmount {
+  font-weight: 600;
+  font-family: var(--font-display);
+  color: var(--text-main);
+}
+
+.totalRow {
+  margin-top: 24px;
+  padding-top: 24px;
+  border-top: 2px dashed var(--border-color);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-weight: 600;
+  color: var(--text-main);
+}
+
+.totalAmount {
+  font-size: 1.5rem;
+  font-family: var(--font-display);
+  color: var(--danger);
+}

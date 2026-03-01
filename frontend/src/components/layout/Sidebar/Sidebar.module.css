@@ -1,0 +1,141 @@
+.sidebar {
+  width: 280px;
+  background-color: var(--bg-sidebar);
+  color: var(--text-muted);
+  height: 100vh;
+  position: fixed;
+  left: 0;
+  top: 0;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--border-color);
+  z-index: 40;
+  transition: transform var(--transition-smooth);
+}
+
+.header {
+  padding: 32px 24px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.logo {
+  width: 36px;
+  height: 36px;
+  background: linear-gradient(135deg, var(--primary) 0%, #818cf8 100%);
+  color: white;
+  border-radius: var(--radius-md);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-family: var(--font-display);
+  font-size: 1.125rem;
+  box-shadow: 0 4px 12px rgba(99, 102, 241, 0.3);
+}
+
+.brand {
+  color: var(--text-main);
+  font-size: 1.125rem;
+  font-weight: 600;
+  margin: 0;
+  letter-spacing: -0.01em;
+}
+
+.nav {
+  flex: 1;
+  padding: 24px;
+  overflow-y: auto;
+}
+
+.navSection {
+  margin-bottom: 32px;
+}
+
+.sectionTitle {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--neutral-text);
+  margin-bottom: 12px;
+  display: block;
+  font-weight: 600;
+  padding-left: 12px;
+}
+
+.navList {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.navLink {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  transition: all var(--transition-fast);
+  font-weight: 500;
+  cursor: pointer;
+  background: transparent;
+  border: none;
+  width: 100%;
+  text-align: left;
+  font-family: var(--font-sans);
+  font-size: 0.9375rem;
+}
+
+.navLink:hover {
+  background: var(--bg-card-hover);
+  color: var(--text-main);
+  transform: translateX(4px);
+}
+
+.active {
+  background: var(--primary-light);
+  color: var(--primary-text);
+  font-weight: 600;
+}
+
+.icon {
+  opacity: 0.7;
+  transition: opacity var(--transition-fast);
+  color: currentcolor;
+}
+
+.navLink:hover .icon {
+  opacity: 1;
+  color: var(--primary);
+}
+
+.footer {
+  padding: 24px;
+  border-top: 1px solid var(--border-color);
+}
+
+.logoutBtn {
+  color: var(--danger);
+}
+.logoutBtn:hover {
+  background: var(--danger-bg);
+  color: var(--danger-text);
+  transform: none;
+}
+.logoutBtn:hover .icon {
+  color: var(--danger-text);
+}
+
+@media (max-width: 1024px) {
+  .sidebar {
+    transform: translateX(-100%);
+  }
+  .sidebar.open {
+    transform: translateX(0);
+  }
+}

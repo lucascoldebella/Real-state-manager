@@ -1,0 +1,208 @@
+.gridContainer {
+  background: var(--bg-card);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-card);
+  border: 1px solid var(--border-color);
+  padding: 32px;
+  margin-top: 32px;
+  overflow: hidden;
+}
+
+.header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  margin-bottom: 24px;
+}
+
+.title {
+  font-size: 1.25rem;
+  color: var(--text-main);
+  margin-bottom: 4px;
+}
+
+.subtitle {
+  color: var(--text-muted);
+  font-size: 0.875rem;
+  font-weight: 500;
+}
+
+.legend {
+  display: flex;
+  gap: 16px;
+  background: var(--bg-main);
+  padding: 8px 16px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--border-color);
+}
+
+.legendItem {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.dotSuccess { background: var(--success); }
+.dotDanger { background: var(--danger); }
+.dotWarning { background: var(--warning); }
+.dotNeutral { background: var(--neutral); }
+.dotDisabled { background: #334155; }
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: 10px;
+}
+
+.unitCard {
+  position: relative;
+  aspect-ratio: 1;
+  border-radius: var(--radius-lg);
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  transition: all var(--transition-smooth);
+  border: 1px solid transparent;
+  background: var(--bg-main);
+  cursor: pointer;
+  overflow: hidden;
+}
+
+.cardGlow {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: radial-gradient(circle at 50% 0%, rgba(255,255,255,0.1) 0%, rgba(255,255,255,0) 70%);
+  opacity: 0;
+  transition: opacity var(--transition-smooth);
+  pointer-events: none;
+}
+
+.unitCard:hover {
+  transform: translateY(-4px) scale(1.02);
+  box-shadow: var(--shadow-lg);
+  z-index: 10;
+}
+
+.unitCard:hover .cardGlow {
+  opacity: 1;
+}
+
+/* Status variants with subtle tinted backgrounds */
+.status-paid {
+  background: var(--success-bg);
+  border-color: rgba(16, 185, 129, 0.2);
+}
+.status-paid:hover {
+  border-color: var(--success);
+  box-shadow: 0 10px 25px -5px rgba(16, 185, 129, 0.15);
+}
+
+.status-overdue {
+  background: var(--danger-bg);
+  border-color: rgba(239, 68, 68, 0.2);
+}
+.status-overdue:hover {
+  border-color: var(--danger);
+  box-shadow: 0 10px 25px -5px rgba(239, 68, 68, 0.15);
+}
+
+.status-due_soon {
+  background: var(--warning-bg);
+  border-color: rgba(245, 158, 11, 0.2);
+}
+.status-due_soon:hover {
+  border-color: var(--warning);
+  box-shadow: 0 10px 25px -5px rgba(245, 158, 11, 0.15);
+}
+
+.status-unpaid {
+  background: color-mix(in oklab, var(--warning-bg) 60%, var(--neutral-bg));
+  border-color: rgba(245, 158, 11, 0.12);
+}
+
+.status-unpaid:hover {
+  border-color: var(--warning);
+  box-shadow: 0 10px 25px -5px rgba(245, 158, 11, 0.12);
+}
+
+.status-vacant {
+  background: var(--neutral-bg);
+  border-color: rgba(148, 163, 184, 0.2);
+}
+.status-vacant:hover {
+  border-color: var(--neutral);
+  box-shadow: 0 10px 25px -5px rgba(148, 163, 184, 0.15);
+}
+
+.status-disabled {
+  background: color-mix(in oklab, var(--neutral-bg) 65%, #cbd5e1);
+  border-color: rgba(71, 85, 105, 0.24);
+}
+
+.status-disabled:hover {
+  border-color: #475569;
+  box-shadow: 0 10px 25px -5px rgba(71, 85, 105, 0.2);
+}
+
+.unitHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+}
+
+.unitNumber {
+  font-size: 1.1rem;
+  font-weight: 700;
+  font-family: var(--font-display);
+  color: var(--text-main);
+  line-height: 1;
+}
+
+.tenantInfo {
+  margin-top: auto;
+}
+
+.tenantName {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--text-main);
+  display: block;
+}
+
+.vacantText {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+@media (max-width: 900px) {
+  .grid {
+    grid-template-columns: repeat(auto-fill, minmax(108px, 1fr));
+  }
+  .header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 16px;
+  }
+}
+@media (max-width: 600px) {
+  .grid {
+    grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+  }
+  .gridContainer {
+    padding: 24px;
+  }
+}

@@ -1,0 +1,231 @@
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
+
+.grid {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.span2 {
+  grid-column: span 2;
+}
+
+.label {
+  font-size: 0.8125rem;
+  color: var(--text-muted);
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.input,
+.select,
+.textarea {
+  border: 1px solid var(--border-color);
+  background: var(--bg-main);
+  color: var(--text-main);
+  border-radius: var(--radius-md);
+  font-size: 0.9375rem;
+  padding: 11px 12px;
+  font-family: var(--font-sans);
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast), background var(--transition-fast);
+}
+
+.input:focus,
+.select:focus,
+.textarea:focus {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px var(--primary-light);
+  background: var(--bg-card);
+}
+
+.textarea {
+  resize: vertical;
+  min-height: 90px;
+}
+
+.error {
+  border-radius: var(--radius-md);
+  padding: 10px 12px;
+  font-size: 0.8125rem;
+  color: var(--danger-text);
+  background: var(--danger-bg);
+  border: 1px solid color-mix(in oklab, var(--danger) 28%, transparent);
+}
+
+.hint {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.profileRow {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  padding: 10px;
+  background: var(--bg-main);
+}
+
+.profilePreview {
+  width: 76px;
+  height: 76px;
+  border-radius: 50%;
+  overflow: hidden;
+  border: 2px solid var(--border-color);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--primary-light);
+  color: var(--primary);
+  font-weight: 700;
+  font-size: 1.2rem;
+  flex-shrink: 0;
+}
+
+.profilePreview img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.profileActions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.fileButton {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-card);
+  border-radius: var(--radius-md);
+  padding: 8px 10px;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--text-main);
+  cursor: pointer;
+}
+
+.fileButton input {
+  display: none;
+}
+
+.linkBtn {
+  border: none;
+  background: transparent;
+  color: var(--primary);
+  font-size: 0.8125rem;
+  cursor: pointer;
+  text-align: left;
+  padding: 0;
+}
+
+.linkBtn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.documentGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.documentCard {
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: var(--bg-main);
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.documentCard img {
+  width: 100%;
+  height: 120px;
+  border-radius: var(--radius-sm);
+  object-fit: cover;
+}
+
+.documentCard span {
+  min-height: 120px;
+  border-radius: var(--radius-sm);
+  border: 1px dashed var(--border-color);
+  color: var(--text-muted);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  font-size: 0.8125rem;
+}
+
+.cropperWrap {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.cropPreview {
+  position: relative;
+  border-radius: var(--radius-lg);
+  height: 340px;
+  overflow: hidden;
+  background: #0f172a;
+}
+
+.cropPreview :global(.reactEasyCrop_Container) {
+  background: transparent !important;
+}
+
+.cropPreview :global(.reactEasyCrop_CropArea) {
+  border: 2px solid rgba(255, 255, 255, 0.9);
+}
+
+.sliderField {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.sliderField input {
+  width: 100%;
+}
+
+@media (max-width: 900px) {
+  .grid {
+    grid-template-columns: 1fr;
+  }
+
+  .span2 {
+    grid-column: span 1;
+  }
+
+  .documentGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .profileRow {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}
