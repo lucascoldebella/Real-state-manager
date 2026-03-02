@@ -36,6 +36,11 @@
 #define PRE_REGISTER_RATE_WINDOW_SEC 600
 #define RATE_LIMIT_SLOTS 256
 
+#define RATE_LIMIT_GLOBAL_RPM 60
+#define RATE_LIMIT_AUTH_RPM 5
+#define RATE_BUCKET_COUNT 1024
+#define MAX_PATH_LEN 2048
+
 typedef struct {
     char *data;
     size_t size;
@@ -69,14 +74,28 @@ typedef struct {
     int count;
 } RateLimitEntry;
 
+typedef struct {
+    char ip[CLIENT_IP_LEN];
+    double tokens;
+    time_t last_refill;
+} RateBucket;
+
 static AppState g_app;
 static RateLimitEntry g_pre_register_limits[RATE_LIMIT_SLOTS];
+static RateBucket g_global_buckets[RATE_BUCKET_COUNT];
+static RateBucket g_auth_buckets[RATE_BUCKET_COUNT];
+static char g_cors_origin[256] = "http://localhost:5173";
+static int g_trust_proxy = 0;
 
 static void add_cors_headers(struct MHD_Response *response) {
-    MHD_add_response_header(response, "Access-Control-Allow-Origin", "*");
+    MHD_add_response_header(response, "Access-Control-Allow-Origin", g_cors_origin);
     MHD_add_response_header(response, "Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
     MHD_add_response_header(response, "Access-Control-Allow-Headers", "Authorization, Content-Type");
     MHD_add_response_header(response, "Access-Control-Max-Age", "86400");
+    MHD_add_response_header(response, "X-Content-Type-Options", "nosniff");
+    MHD_add_response_header(response, "X-Frame-Options", "DENY");
+    MHD_add_response_header(response, "Cache-Control", "no-store");
+    MHD_add_response_header(response, "Content-Security-Policy", "default-src 'none'");
 }
 
 static int send_response(struct MHD_Connection *connection, int status, const char *content_type, const char *data,
@@ -216,10 +235,8 @@ static int secure_random_bytes(unsigned char *buf, size_t len) {
 static void generate_token(char token[TOKEN_LEN + 1]) {
     unsigned char bytes[TOKEN_LEN / 2];
     if (!secure_random_bytes(bytes, sizeof(bytes))) {
-        srand((unsigned int) (time(NULL) ^ getpid()));
-        for (size_t i = 0; i < sizeof(bytes); i++) {
-            bytes[i] = (unsigned char) (rand() % 255);
-        }
+        fprintf(stderr, "FATAL: /dev/urandom unavailable — cannot generate secure tokens\n");
+        abort();
     }
     for (size_t i = 0; i < sizeof(bytes); i++) {
         snprintf(token + (i * 2), 3, "%02x", bytes[i]);
@@ -266,12 +283,17 @@ static void get_client_ip(struct MHD_Connection *connection, char out[CLIENT_IP_
         if (inet_ntop(AF_INET, &in->sin_addr, out, CLIENT_IP_LEN) == NULL) {
             snprintf(out, CLIENT_IP_LEN, "unknown");
         }
-        return;
-    }
-    if (addr->sa_family == AF_INET6) {
+    } else if (addr->sa_family == AF_INET6) {
         const struct sockaddr_in6 *in6 = (const struct sockaddr_in6 *) addr;
         if (inet_ntop(AF_INET6, &in6->sin6_addr, out, CLIENT_IP_LEN) == NULL) {
             snprintf(out, CLIENT_IP_LEN, "unknown");
+        }
+    }
+
+    if (g_trust_proxy) {
+        const char *real_ip = MHD_lookup_connection_value(connection, MHD_HEADER_KIND, "X-Real-IP");
+        if (real_ip && real_ip[0] != '\0' && strlen(real_ip) < CLIENT_IP_LEN) {
+            snprintf(out, CLIENT_IP_LEN, "%s", real_ip);
         }
     }
 }
@@ -309,6 +331,52 @@ static int pre_register_rate_allow(struct MHD_Connection *connection, char out_i
     snprintf(g_pre_register_limits[idx].ip, CLIENT_IP_LEN, "%s", out_ip);
     g_pre_register_limits[idx].window_start = now;
     g_pre_register_limits[idx].count = 1;
+    return 1;
+}
+
+static int rate_limit_check(RateBucket *buckets, const char *ip, int rpm) {
+    time_t now = time(NULL);
+    double refill_rate = (double)rpm / 60.0;
+    unsigned int hash = 5381;
+    for (const char *p = ip; *p; p++) {
+        hash = ((hash << 5) + hash) + (unsigned char)*p;
+    }
+    int start = (int)(hash % RATE_BUCKET_COUNT);
+
+    for (int i = 0; i < RATE_BUCKET_COUNT; i++) {
+        int idx = (start + i) % RATE_BUCKET_COUNT;
+        if (buckets[idx].ip[0] == '\0') {
+            snprintf(buckets[idx].ip, CLIENT_IP_LEN, "%s", ip);
+            buckets[idx].tokens = (double)rpm - 1.0;
+            buckets[idx].last_refill = now;
+            return 1;
+        }
+        if (strcmp(buckets[idx].ip, ip) == 0) {
+            double elapsed = difftime(now, buckets[idx].last_refill);
+            buckets[idx].tokens += elapsed * refill_rate;
+            if (buckets[idx].tokens > (double)rpm) {
+                buckets[idx].tokens = (double)rpm;
+            }
+            buckets[idx].last_refill = now;
+            if (buckets[idx].tokens < 1.0) {
+                return 0;
+            }
+            buckets[idx].tokens -= 1.0;
+            return 1;
+        }
+    }
+    return 1;
+}
+
+static int is_valid_path(const char *path) {
+    if (!path) return 0;
+    size_t len = strlen(path);
+    if (len == 0 || len > MAX_PATH_LEN) return 0;
+    if (strstr(path, "..") != NULL) return 0;
+    for (size_t i = 0; i < len; i++) {
+        unsigned char c = (unsigned char)path[i];
+        if (c < 0x20 || c == 0x7F) return 0;
+    }
     return 1;
 }
 
@@ -1000,7 +1068,7 @@ static int has_route_access(const AuthUser *user, const char *url) {
     if (starts_with(url, "/api/documents") || starts_with(url, "/api/document-templates")) {
         return user->can_documents == 1;
     }
-    return 1;
+    return 0;
 }
 
 static int handle_health(struct MHD_Connection *connection) {
@@ -3782,6 +3850,18 @@ static int route_request(struct MHD_Connection *connection, const char *url, con
     run_automation_cycle();
 
     if (strcmp(url, "/api/auth/login") == 0 && strcmp(method, "POST") == 0) {
+        char auth_ip[CLIENT_IP_LEN];
+        get_client_ip(connection, auth_ip);
+        if (!rate_limit_check(g_auth_buckets, auth_ip, RATE_LIMIT_AUTH_RPM)) {
+            pthread_mutex_unlock(&g_app.db_lock);
+            struct MHD_Response *r = MHD_create_response_from_buffer(
+                29, (void *)"{\"error\":\"too_many_requests\"}", MHD_RESPMEM_PERSISTENT);
+            add_cors_headers(r);
+            MHD_add_response_header(r, "Retry-After", "60");
+            int rv = MHD_queue_response(connection, MHD_HTTP_TOO_MANY_REQUESTS, r);
+            MHD_destroy_response(r);
+            return rv;
+        }
         ret = handle_login(connection, body);
         goto done;
     }
@@ -4004,6 +4084,26 @@ static enum MHD_Result request_handler(void *cls, struct MHD_Connection *connect
 
     ConnectionInfo *info = *con_cls;
     if (!info) {
+        if (strcmp(method, "GET") != 0 && strcmp(method, "POST") != 0 &&
+            strcmp(method, "PUT") != 0 && strcmp(method, "DELETE") != 0 &&
+            strcmp(method, "PATCH") != 0 && strcmp(method, "OPTIONS") != 0 &&
+            strcmp(method, "HEAD") != 0) {
+            return send_error(connection, MHD_HTTP_METHOD_NOT_ALLOWED, "method_not_allowed");
+        }
+        if (!is_valid_path(url)) {
+            return send_error(connection, MHD_HTTP_BAD_REQUEST, "invalid_path");
+        }
+        char client_ip[CLIENT_IP_LEN];
+        get_client_ip(connection, client_ip);
+        if (!rate_limit_check(g_global_buckets, client_ip, RATE_LIMIT_GLOBAL_RPM)) {
+            struct MHD_Response *r = MHD_create_response_from_buffer(
+                29, (void *)"{\"error\":\"too_many_requests\"}", MHD_RESPMEM_PERSISTENT);
+            add_cors_headers(r);
+            MHD_add_response_header(r, "Retry-After", "60");
+            int rv = MHD_queue_response(connection, MHD_HTTP_TOO_MANY_REQUESTS, r);
+            MHD_destroy_response(r);
+            return rv;
+        }
         info = calloc(1, sizeof(ConnectionInfo));
         if (!info) {
             return MHD_NO;
@@ -4052,6 +4152,17 @@ int main(void) {
 
     const char *db_path_env = getenv("DB_PATH");
     const char *port_env = getenv("PORT");
+    const char *bind_env = getenv("BIND_ADDRESS");
+    const char *cors_env = getenv("CORS_ORIGIN");
+    const char *proxy_env = getenv("TRUST_PROXY");
+
+    const char *addr_str = bind_env ? bind_env : "127.0.0.1";
+    if (cors_env && cors_env[0] != '\0') {
+        snprintf(g_cors_origin, sizeof(g_cors_origin), "%s", cors_env);
+    }
+    if (proxy_env && strcmp(proxy_env, "1") == 0) {
+        g_trust_proxy = 1;
+    }
 
     snprintf(g_app.db_path, sizeof(g_app.db_path), "%s", db_path_env ? db_path_env : "./data/realstate.db");
     snprintf(g_app.generated_dir, sizeof(g_app.generated_dir), "%s", "./generated");
@@ -4069,20 +4180,31 @@ int main(void) {
         port = DEFAULT_PORT;
     }
 
-    struct MHD_Daemon *daemon =
-        MHD_start_daemon(MHD_USE_INTERNAL_POLLING_THREAD, port, NULL, NULL, &request_handler, NULL,
-                         MHD_OPTION_CONNECTION_TIMEOUT, (unsigned int) 120, MHD_OPTION_NOTIFY_COMPLETED,
-                         request_completed, NULL, MHD_OPTION_END);
-
-    if (!daemon) {
-        fprintf(stderr, "Failed to start HTTP server on port %hu\n", port);
+    struct sockaddr_in bind_addr;
+    memset(&bind_addr, 0, sizeof(bind_addr));
+    bind_addr.sin_family = AF_INET;
+    bind_addr.sin_port = htons(port);
+    if (inet_pton(AF_INET, addr_str, &bind_addr.sin_addr) != 1) {
+        fprintf(stderr, "Invalid BIND_ADDRESS: %s\n", addr_str);
         sqlite3_close(g_app.db);
         pthread_mutex_destroy(&g_app.db_lock);
         return 1;
     }
 
-    printf("Oliveira Costa Real Estate API running on port %hu\n", port);
-    printf("Admin login: admin@imobiliaria.local / ChangeThisNow123!\n");
+    struct MHD_Daemon *daemon =
+        MHD_start_daemon(MHD_USE_INTERNAL_POLLING_THREAD, port, NULL, NULL, &request_handler, NULL,
+                         MHD_OPTION_CONNECTION_TIMEOUT, (unsigned int) 120, MHD_OPTION_NOTIFY_COMPLETED,
+                         request_completed, NULL, MHD_OPTION_SOCK_ADDR, (struct sockaddr *)&bind_addr,
+                         MHD_OPTION_END);
+
+    if (!daemon) {
+        fprintf(stderr, "Failed to start HTTP server on %s:%hu\n", addr_str, port);
+        sqlite3_close(g_app.db);
+        pthread_mutex_destroy(&g_app.db_lock);
+        return 1;
+    }
+
+    printf("Oliveira Costa Real Estate API running on %s:%hu\n", addr_str, port);
 
     while (1) {
         sleep(1);

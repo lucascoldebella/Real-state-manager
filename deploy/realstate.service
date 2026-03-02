@@ -1,0 +1,48 @@
+[Unit]
+Description=Oliveira Costa Real Estate API
+After=network.target
+
+[Service]
+Type=simple
+User=realstate
+Group=realstate
+WorkingDirectory=/opt/realstate/backend
+ExecStart=/opt/realstate/backend/realstate_api
+Restart=on-failure
+RestartSec=5
+
+# Environment
+Environment=BIND_ADDRESS=127.0.0.1
+Environment=PORT=8090
+Environment=DB_PATH=/opt/realstate/backend/data/realstate.db
+Environment=CORS_ORIGIN=https://imoveis.oliveiracosta.com
+Environment=TRUST_PROXY=1
+
+# Sandboxing
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+NoNewPrivileges=true
+MemoryDenyWriteExecute=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+SystemCallFilter=~@mount @swap @reboot @raw-io @module @debug
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+LockPersonality=true
+
+# Writable paths (data and generated reports only)
+ReadWritePaths=/opt/realstate/backend/data /opt/realstate/backend/generated
+
+# Resource limits
+LimitNPROC=64
+MemoryMax=256M
+TasksMax=32
+
+[Install]
+WantedBy=multi-user.target
