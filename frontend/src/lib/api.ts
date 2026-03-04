@@ -2,7 +2,7 @@
 
 import type { AuthResponse, AuthUser } from './types';
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8090';
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? '';
 const TOKEN_KEY = 'oc_dashboard_token';
 const USER_KEY = 'oc_dashboard_user';
 

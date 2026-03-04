@@ -27,6 +27,7 @@ function getTitle(pathname: string): string {
   if (pathname.startsWith('/finance')) return 'Finance';
   if (pathname.startsWith('/documents')) return 'Documents';
   if (pathname.startsWith('/settings')) return 'Settings';
+  if (pathname.startsWith('/security')) return 'Security Monitor';
   return 'Dashboard';
 }
 
@@ -36,6 +37,7 @@ function getRequiredModule(pathname: string): AccessModule {
   if (pathname.startsWith('/finance')) return 'finance';
   if (pathname.startsWith('/documents')) return 'documents';
   if (pathname.startsWith('/settings')) return 'settings';
+  if (pathname.startsWith('/security')) return 'settings';
   return 'dashboard';
 }
 

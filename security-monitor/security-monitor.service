@@ -1,0 +1,17 @@
+[Unit]
+Description=Security Monitor Daemon
+After=network.target crowdsec.service auditd.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/security-monitor
+ExecStart=/usr/bin/python3 /opt/security-monitor/security_monitor.py
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=security-monitor
+
+[Install]
+WantedBy=multi-user.target

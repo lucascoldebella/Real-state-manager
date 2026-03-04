@@ -1,0 +1,374 @@
+================================================================================
+                      SECURITY BREACH REPORT
+                    Real Estate Manager VPS
+================================================================================
+
+Date of Incident:    March 3, 2026
+Date of Report:      March 3, 2026
+Server:              DigitalOcean Droplet — 165.227.118.111 (Ubuntu 24.04)
+Severity:            CRITICAL — Remote Code Execution + Crypto Mining
+Status:              Contained — Droplet scheduled for destruction
+
+
+================================================================================
+1. EXECUTIVE SUMMARY
+================================================================================
+
+At approximately 19:04 UTC on March 3, 2026, the VPS hosting the Coldnb
+e-commerce platform and the Real Estate Manager dashboard was compromised via
+a critical Remote Code Execution (RCE) vulnerability in Next.js (CVE-2025-66478).
+
+An automated attacker from IP 54.253.172.137 (AWS Sydney) exploited the
+React Server Components deserialization flaw in Next.js 15.1.6 to execute
+arbitrary code on the server. The attacker deployed:
+
+  1. XMRig 6.21.0 — Monero cryptocurrency miner
+  2. scanner_linux — A Go-based worm that scans the internet for other
+     vulnerable servers to spread the infection
+
+The attack was fully automated with no human interaction. The attacker's
+tooling included a 5-minute C2 (Command & Control) cycle that re-deployed
+the malware if killed.
+
+The attack was detected, contained, and cleaned within ~15 minutes.
+The droplet will be destroyed and rebuilt with patched software.
+
+
+================================================================================
+2. VULNERABILITY DETAILS
+================================================================================
+
+CVE ID:          CVE-2025-66478 (Next.js) / CVE-2025-55182 (React)
+CVSS Score:      10.0 (CRITICAL)
+Disclosure Date: December 3, 2025
+Type:            Remote Code Execution via Deserialization
+
+DESCRIPTION:
+React Server Components (RSC) in Next.js accept serialized data via HTTP
+POST requests. Due to default trust between components, attacker-controlled
+serialized objects are deserialized by the server without validation. This
+allows an unauthenticated attacker to execute arbitrary code under the
+Node.js runtime with a single crafted HTTP request.
+
+AFFECTED VERSIONS:
+  - Next.js 14.3.0-canary.77 through 16.0.6
+  - Our version: Next.js 15.1.6 (VULNERABLE)
+
+PATCHED VERSIONS:
+  - Next.js 15.1.11+ (for 15.1.x branch)
+
+REFERENCES:
+  - https://nextjs.org/blog/CVE-2025-66478
+  - https://react.dev/blog/2025/12/03/critical-security-vulnerability-in-react-server-components
+  - https://www.praetorian.com/blog/critical-advisory-remote-code-execution-in-next-js-cve-2025-66478-with-working-exploit/
+  - https://www.oligo.security/blog/critical-react-next-js-rce-vulnerability-cve-2025-55182-cve-2025-66478-what-you-need-to-know
+
+
+================================================================================
+3. ATTACK TIMELINE
+================================================================================
+
+All times in UTC, March 3, 2026.
+
+07:22  — VPS booted (fresh DigitalOcean droplet provisioned)
+07:33  — Security stack deployed: UFW, CrowdSec, fail2ban, auditd
+07:44  — Both applications deployed and running
+         Coldnb: Next.js 15.1.6 on port 80 (via nginx)
+         Real Estate: Next.js 15.5.12 on port 8081 (via nginx)
+
+~19:04:54  — ATTACK BEGINS
+             Attacker IP: 54.253.172.137 (AWS ap-southeast-2, Sydney)
+             User-Agent: Go-http-client/1.1
+
+19:04:54  — Attacker sends GET / to port 80 (fingerprints Next.js version)
+19:04:54  — First POST / exploit payload (HTTP 500, 115 bytes response)
+19:04:55  — Second POST / payload (HTTP 500, 108 bytes)
+19:04:55  — Third POST / payload (HTTP 500, 112 bytes)
+19:04:56  — Fourth POST / payload — SUCCESSFUL RCE
+             xmrig.tar.gz appears on disk (Birth: 19:04:56)
+             File location: /opt/apps/coldnb/coldnb main/coldnb nextjs/
+
+19:05:01  — XMRig crypto miner starts (PID 64015)
+             Command: xmrig-6.21.0/xmrig -o pool.supportxmr.com:443
+               -u 45FizYc8eAcMAQetBjVCyeAs8M2ausJpUMLRGCGgLPEuJohTKeamMk6jVFRpX4x2MXHrJxwFdm3iPDufdSRv2agC5XjykhA
+               --tls -B
+             CPU usage: 183% (both cores)
+
+19:05:12  — scanner_linux worm starts (PID 64051)
+             Command: ./scanner_linux -t 1000
+             Scanning random IPs on ports 80/443 to find more victims
+             Binary: ELF 64-bit, statically linked Go binary
+             Compiled: February 26, 2026
+
+19:05:20  — Malware's internal monitor service starts
+19:09:41  — C2 check-in: 2 POST requests (5-minute cycle)
+
+~19:14:00 — FIRST RESPONSE: Processes killed via kill -9
+19:14:41  — C2 REDEPLOYS: New burst of POST requests
+19:14:44  — xmrig.tar.gz re-downloaded to disk
+19:15:10  — Malware respawns with new PIDs (64881, 64999)
+
+~19:17:00 — SECOND RESPONSE:
+             - Processes killed again
+             - All malware files deleted from disk
+             - Attacker IP blocked in UFW firewall
+             - CrowdSec ban added (30-day)
+             - Nginx hardened to block Next-Action header + Go-http-client bots
+
+19:19:41  — Attacker attempts C2 check-in — BLOCKED BY UFW
+
+
+================================================================================
+4. MALWARE ANALYSIS
+================================================================================
+
+4.1 XMRig Crypto Miner
+-----------------------
+Binary:     xmrig-6.21.0/xmrig (8.9 MB, standard release from Nov 23, 2023)
+Pool:       pool.supportxmr.com:443 (TLS encrypted)
+Wallet:     45FizYc8eAcMAQetBjVCyeAs8M2ausJpUMLRGCGgLPEuJohTKeamMk6jVFRpX4x2MXHrJxwFdm3iPDufdSRv2agC5XjykhA
+Behavior:   Mines Monero (XMR) using all available CPU cores
+Impact:     183% CPU usage, degraded server performance
+
+4.2 Scanner Worm
+-----------------
+Binary:     scanner_linux (8.9 MB, statically linked Go binary)
+Compiled:   February 26, 2026 (recent, actively maintained malware)
+Behavior:   Scans random internet IPs on ports 80/443, checking HTTP headers
+            to identify vulnerable Next.js installations
+Output:     data.log — 3.1 MB of scan results in ~10 minutes
+            monitor.log — Internal watchdog service
+            exploited.log — Successfully compromised servers (empty = none yet)
+            failed.log — Failed exploit attempts (empty)
+
+4.3 Persistence Mechanism
+--------------------------
+The attacker did NOT install traditional persistence (no crontabs, no systemd
+services, no SSH keys, no web shells). Instead, the C2 operates via the same
+vulnerability — every 5 minutes, the exploit server sends new POST requests to
+re-check and re-deploy if the malware was killed. This makes the vulnerability
+itself the persistence mechanism.
+
+4.4 Files Deployed (all in /opt/apps/coldnb/coldnb main/coldnb nextjs/)
+------------------------------------------------------------------------
+  xmrig.tar.gz          — Compressed miner package
+  xmrig-6.21.0/         — Extracted miner directory
+  xmrig-6.21.0/xmrig   — Miner binary
+  xmrig-6.21.0/config.json — Default xmrig config (not used, CLI args override)
+  scanner_linux         — Worm scanner binary
+  data.log              — Scan results (3.1 MB)
+  monitor.log           — Watchdog service log
+  exploited.log         — Successful infections log (empty)
+  failed.log            — Failed infections log (empty)
+
+
+================================================================================
+5. ATTACKER PROFILE
+================================================================================
+
+IP Address:     54.253.172.137
+Cloud:          Amazon Web Services (AWS)
+Region:         ap-southeast-2 (Sydney, Australia)
+User-Agent:     Go-http-client/1.1
+Total Requests: 34 HTTP requests over ~15 minutes
+
+Attack Pattern:
+  - Fully automated, no human operator
+  - Reconnaissance: GET / to identify Next.js version
+  - Exploitation: Multiple POST / payloads until RCE achieved
+  - Deployment: Downloads xmrig + scanner to target directory
+  - C2 Cycle: Re-checks every 5 minutes via POST requests
+  - Propagation: scanner_linux spreads to other vulnerable servers
+
+Monero Wallet: 45FizYc8eAcMAQetBjVCyeAs8M2ausJpUMLRGCGgLPEuJohTKeamMk6jVFRpX4x2MXHrJxwFdm3iPDufdSRv2agC5XjykhA
+(Monero is untraceable cryptocurrency — wallet owner cannot be identified)
+
+
+================================================================================
+6. IMPACT ASSESSMENT
+================================================================================
+
+DATA BREACH:        NO — No evidence of data exfiltration
+                    The attacker deployed only mining + scanning tools
+                    No database access, no file reads, no credential theft
+
+SERVICE DISRUPTION: YES (MINOR)
+                    CPU was at 183% for ~12 minutes
+                    Applications remained functional but slower
+
+FINANCIAL:          MINIMAL
+                    ~12 minutes of server CPU used for mining
+                    Estimated mining revenue for attacker: < $0.01
+
+REPUTATION:         LOW RISK
+                    scanner_linux was actively scanning from our IP
+                    Could result in abuse reports from DigitalOcean
+                    No client data was exposed
+
+LATERAL MOVEMENT:   NO
+                    Attacker did not pivot to the Real Estate Manager
+                    Attacker did not access PostgreSQL or SQLite databases
+                    Attacker did not install SSH keys or backdoors
+                    Attacker did not modify application code
+
+
+================================================================================
+7. SECURITY MEASURES THAT WERE IN PLACE
+================================================================================
+
+The following security measures were deployed but could not prevent this
+specific attack because it exploited the application layer (Next.js):
+
+  [EFFECTIVE]
+  - UFW Firewall — Blocked attacker after manual intervention
+  - CrowdSec — Detected SSH brute force attempts (separate from this attack)
+  - fail2ban — Protected SSH from brute force
+  - auditd — Logged filesystem events (16 rules)
+  - SSH key-only auth — No password authentication possible
+  - SSH key passphrase — Protected against key theft
+  - noexec /dev/shm — Prevented execution from shared memory
+  - sysctl hardening — Network stack protection
+  - nginx rate limiting — 3 req/min on auth endpoints
+  - Security Monitor — Python daemon detecting suspicious processes/ports
+
+  [INEFFECTIVE AGAINST THIS ATTACK]
+  - All of the above — The attack exploited the application itself (Next.js)
+    running on a permitted port (80) with legitimate-looking HTTP requests.
+    No amount of network-level security can stop an application-layer RCE.
+
+
+================================================================================
+8. ROOT CAUSE ANALYSIS
+================================================================================
+
+PRIMARY CAUSE:
+  Next.js 15.1.6 contains a critical deserialization vulnerability
+  (CVE-2025-66478) that was publicly disclosed on December 3, 2025 —
+  3 months before this deployment. The Coldnb project was deployed with
+  an outdated, unpatched version of Next.js.
+
+CONTRIBUTING FACTORS:
+  1. No dependency vulnerability scanning (npm audit) was run before deploy
+  2. Next.js was not updated after the CVE disclosure (Dec 2025 → Mar 2026)
+  3. The Coldnb frontend was running as root (not as a limited user)
+  4. No Web Application Firewall (WAF) to inspect POST request bodies
+  5. nginx did not filter suspicious POST patterns to the frontend
+
+WHY THE SECURITY STACK DIDN'T HELP:
+  The attack came through port 80 as a normal HTTP POST request. From the
+  firewall's perspective, this is indistinguishable from a legitimate user
+  submitting a form. The vulnerability exists in the application code itself
+  (Next.js runtime), which no amount of network-level security can fix.
+
+
+================================================================================
+9. REMEDIATION ACTIONS TAKEN
+================================================================================
+
+IMMEDIATE (during incident):
+  [x] Killed malware processes (xmrig + scanner_linux)
+  [x] Deleted all malware files from disk
+  [x] Blocked attacker IP 54.253.172.137 in UFW
+  [x] Added 30-day CrowdSec ban for attacker IP
+  [x] Added nginx rules to block Next-Action header (RSC exploit vector)
+  [x] Added nginx rules to block Go-http-client POST requests to /
+
+POST-INCIDENT:
+  [x] Pulled all custom code from VPS to local machine (secure)
+  [x] Created this incident report
+  [ ] Destroy compromised droplet (scheduled)
+  [ ] Upgrade Next.js to 15.1.11+ before next deployment
+  [ ] Run npm audit on all projects before deploy
+  [ ] Deploy applications as non-root users
+  [ ] Consider adding a WAF (CloudFlare, ModSecurity)
+
+
+================================================================================
+10. LESSONS LEARNED
+================================================================================
+
+1. KEEP DEPENDENCIES UPDATED
+   The CVE was disclosed 3 months before the attack. Running `npm audit`
+   before deployment would have flagged this critical vulnerability.
+
+2. APPLICATION-LAYER SECURITY MATTERS MOST
+   We deployed UFW, CrowdSec, fail2ban, auditd — all excellent for
+   network/OS security. But the attack came through the application itself.
+   A single unpatched npm dependency negated everything.
+
+3. DON'T RUN AS ROOT
+   The Next.js server ran as root. When the RCE executed, the attacker
+   had full root access. Running as a limited user (e.g., www-data) would
+   have significantly limited the damage.
+
+4. AUTOMATED SCANNING IS RELENTLESS
+   The server was online for only ~12 hours before being found and
+   exploited. Automated scanners continuously sweep the internet for
+   known vulnerabilities. There is no "security through obscurity."
+
+5. MONITOR CPU USAGE
+   The security monitor daemon detected the high CPU process but the
+   alert wasn't acted upon quickly enough. Automated response (auto-kill
+   of unknown high-CPU processes) would have reduced impact.
+
+
+================================================================================
+11. RECOMMENDATIONS FOR NEXT DEPLOYMENT
+================================================================================
+
+BEFORE DEPLOYING:
+  1. Run `npm audit` on all projects — fix critical/high vulnerabilities
+  2. Upgrade Coldnb Next.js from 15.1.6 to 15.1.11+
+  3. Verify Real Estate Manager Next.js 15.5.12 is also patched
+  4. Consider using Cloudflare (free tier) as a reverse proxy/WAF
+
+DEPLOYMENT SECURITY:
+  5. Create dedicated system users for each application (not root)
+  6. Use systemd with restrictive security directives:
+     - NoNewPrivileges=true
+     - ProtectSystem=strict
+     - ReadWritePaths=/opt/apps/[app]
+  7. Set filesystem permissions: apps own their directory, nothing else
+  8. Enable automatic security updates (unattended-upgrades)
+
+MONITORING:
+  9. Add automated response to security monitor:
+     - Auto-kill unknown processes above 50% CPU for > 30 seconds
+     - Alert on new outbound connections to unknown ports
+     - Alert on new files in application directories
+  10. Set up email/SMS alerts for critical security events
+
+ONGOING:
+  11. Schedule monthly `npm audit` + dependency updates
+  12. Subscribe to Next.js security advisories
+  13. Keep this report for reference
+
+
+================================================================================
+12. FILES PRESERVED FROM COMPROMISED SERVER
+================================================================================
+
+The following files were pulled from the VPS before destruction:
+
+  security-monitor/
+    security_monitor.py        — Custom security monitoring daemon
+    security-monitor.service   — systemd service file
+    nginx-multi-apps.conf      — nginx configuration for both apps
+
+  frontend/src/app/(dashboard)/security/
+    page.tsx                   — Security dashboard page
+    page.module.css            — Security dashboard styles
+
+  frontend/src/components/layout/
+    Sidebar/Sidebar.tsx        — Updated with Security nav item
+    Sidebar/Sidebar.module.css — Mobile sidebar fix
+    DashboardLayout/DashboardLayout.tsx  — Security page title support
+    DashboardLayout/DashboardLayout.module.css — Mobile layout fix
+
+  frontend/src/lib/
+    api.ts                     — Fixed API_BASE_URL (|| → ??)
+
+
+================================================================================
+                         END OF REPORT
+================================================================================

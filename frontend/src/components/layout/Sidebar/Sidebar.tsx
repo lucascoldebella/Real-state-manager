@@ -3,7 +3,7 @@
 import React from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { Home, Users, Building, PieChart, FileText, Settings, LogOut } from 'lucide-react';
+import { Home, Users, Building, PieChart, FileText, Settings, LogOut, Shield } from 'lucide-react';
 import { useAuth } from '../../../lib/auth-context';
 import type { AccessModule } from '../../../lib/auth-context';
 import styles from './Sidebar.module.css';
@@ -21,6 +21,7 @@ const navItems: NavItem[] = [
   { icon: Users, label: 'Tenants', href: '/tenants', module: 'tenants' },
   { icon: PieChart, label: 'Finance', href: '/finance', module: 'finance' },
   { icon: FileText, label: 'Documents', href: '/documents', module: 'documents' },
+  { icon: Shield, label: 'Security', href: '/security', module: 'settings' as AccessModule },
 ];
 
 function isActivePath(pathname: string, href: string): boolean {
