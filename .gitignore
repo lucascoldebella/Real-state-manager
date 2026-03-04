@@ -12,3 +12,4 @@ frontend/out
 # Shared
 *.log
 .DS_Store
+.env.local
