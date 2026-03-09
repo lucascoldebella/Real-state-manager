@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Oliveira Costa Real Estate — Database Sync Script
 # Syncs SQLite database between VPS and local machine.
 #
@@ -7,12 +7,15 @@
 #   ./scripts/db-sync.sh push       # Push local database → VPS
 #   ./scripts/db-sync.sh --backup   # Only download VPS backup, don't overwrite local
 
-set -e
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 VPS="coldnb-vps"
 VPS_DB="/opt/realstate/backend/data/realstate.db"
-LOCAL_DB="$(dirname "$0")/../backend/data/realstate.db"
-BACKUP_DIR="$(dirname "$0")/../dumps"
+VPS_SERVICE="realstate-backend"
+LOCAL_DB="$ROOT_DIR/backend/data/realstate.db"
+BACKUP_DIR="$ROOT_DIR/dumps"
 TIMESTAMP=$(date +%Y%m%d-%H%M%S)
 
 RED='\033[0;31m'
@@ -31,6 +34,26 @@ BACKUP_ONLY=false
 [ "$1" = "--backup" ] && BACKUP_ONLY=true && ACTION="pull"
 
 mkdir -p "$BACKUP_DIR"
+mkdir -p "$(dirname "$LOCAL_DB")"
+
+verify_local_db() {
+    local db_path="$1"
+    if ! command -v sqlite3 >/dev/null 2>&1; then
+        warn "sqlite3 not found locally; skipping integrity check for $db_path"
+        return 0
+    fi
+
+    local result
+    result="$(sqlite3 "$db_path" "PRAGMA integrity_check;" 2>/dev/null || true)"
+    [ "$result" = "ok" ] || fail "SQLite integrity check failed for $db_path"
+}
+
+verify_remote_db() {
+    local db_path="$1"
+    local result
+    result="$(ssh "$VPS" "sqlite3 '$db_path' 'PRAGMA integrity_check;'" 2>/dev/null || true)"
+    [ "$result" = "ok" ] || fail "SQLite integrity check failed on VPS for $db_path"
+}
 
 echo ""
 echo "========================================"
@@ -45,6 +68,7 @@ case "$ACTION" in
 
         # Download from VPS
         scp "$VPS:$VPS_DB" "$BACKUP_FILE"
+        verify_local_db "$BACKUP_FILE"
         DUMP_SIZE=$(du -h "$BACKUP_FILE" | cut -f1)
         ok "Backup saved: $BACKUP_FILE ($DUMP_SIZE)"
 
@@ -68,6 +92,7 @@ case "$ACTION" in
         fi
 
         cp "$BACKUP_FILE" "$LOCAL_DB"
+        verify_local_db "$LOCAL_DB"
         ok "Local database synced from VPS"
         ;;
 
@@ -83,17 +108,25 @@ case "$ACTION" in
             fail "Local database not found at: $LOCAL_DB"
         fi
 
+        verify_local_db "$LOCAL_DB"
+
         # Backup VPS DB first
         info "Backing up VPS database..."
         ssh "$VPS" "cp $VPS_DB ${VPS_DB}.bak-$TIMESTAMP"
 
-        # Upload local DB
-        info "Uploading local database to VPS..."
-        scp "$LOCAL_DB" "$VPS:$VPS_DB"
+        REMOTE_INCOMING="/tmp/realstate.db.incoming-$TIMESTAMP"
+
+        # Upload local DB to a temp file first
+        info "Uploading local database to VPS temp path..."
+        scp "$LOCAL_DB" "$VPS:$REMOTE_INCOMING"
+        verify_remote_db "$REMOTE_INCOMING"
+
+        info "Replacing VPS database atomically..."
+        ssh "$VPS" "mv '$REMOTE_INCOMING' '$VPS_DB'"
 
         # Restart the API to pick up new DB
         info "Restarting Real Estate API..."
-        ssh "$VPS" "systemctl restart realstate-api"
+        ssh "$VPS" "bash -lc \"systemctl restart $VPS_SERVICE && systemctl is-active --quiet $VPS_SERVICE && curl -fsS http://127.0.0.1:8090/health >/dev/null\""
 
         ok "VPS database synced from local"
         ;;

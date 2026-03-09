@@ -21,7 +21,7 @@ Production-style condominium management system with:
 
 ### Fast start (recommended)
 ```bash
-cd /home/lucas/oliveira-costa-real-estate
+cd /home/lucas/Documents/Development/oliveira-costa-real-estate
 ./build-local.sh
 ./run-local.sh
 ```
@@ -34,7 +34,7 @@ RUN_MODE=dev ./run-local.sh
 
 ### Full restart (kills services, clears cache, rebuilds, starts again)
 ```bash
-cd /home/lucas/oliveira-costa-real-estate
+cd /home/lucas/Documents/Development/oliveira-costa-real-estate
 ./restart-all.sh
 ```
 
@@ -49,6 +49,7 @@ export $(grep -v '^#' .env | xargs)
 
 Backend default:
 - URL: `http://127.0.0.1:8090`
+- Also reachable as: `http://localhost:8090`
 - Health: `GET /health`
 
 ### 2) Frontend
@@ -61,16 +62,61 @@ npm run dev
 
 Frontend default:
 - URL: `http://127.0.0.1:5173`
+- Also reachable as: `http://localhost:5173`
 
 ## Environment variables
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `PORT` | `8090` | HTTP listen port |
-| `DB_PATH` | `./data/realstate.db` | Path to SQLite database file |
+| `DB_PATH` | `./data/realstate.db` | Path to SQLite database file, relative to the backend working directory |
 | `BIND_ADDRESS` | `127.0.0.1` | Address to bind the HTTP server to. **Never set to `0.0.0.0` in production** |
 | `CORS_ORIGIN` | `http://localhost:5173` | Allowed CORS origin (single origin, no wildcards) |
 | `TRUST_PROXY` | `0` | Set to `1` when behind Nginx to read client IP from `X-Real-IP` header |
+
+## Deploy workflow
+
+The intended workflow is:
+- code and test locally
+- deploy code to the VPS with `./scripts/deploy.sh`
+- treat the VPS SQLite database as the source of truth
+- pull the VPS database back locally with `./scripts/db-sync.sh pull`
+
+### Safe deploy behavior
+
+`./scripts/deploy.sh` keeps the one-command flow, but it does **not** auto-commit local-only runtime files:
+- `backend/.env`
+- `frontend/.env.local`
+- `backend/data/`
+- `backend/generated/`
+- root `data/`
+- root `dumps/`
+- root `generated/`
+
+That keeps local database copies and machine-specific config out of production commits.
+
+### Database sync
+
+```bash
+./scripts/db-sync.sh pull
+```
+
+Pull mode:
+- downloads the VPS database
+- stores a timestamped backup in `dumps/`
+- verifies SQLite integrity
+- overwrites the local dev database only after confirmation
+
+```bash
+./scripts/db-sync.sh push
+```
+
+Push mode is intentionally manual and should be rare:
+- verifies the local SQLite database before upload
+- creates a timestamped backup of the VPS database first
+- uploads to a temporary file on the VPS
+- verifies integrity again on the VPS
+- replaces the production DB and restarts `realstate-backend`
 
 ## API highlights
 - `POST /api/auth/login`
@@ -100,6 +146,9 @@ The backend **must not** be exposed directly to the internet. The production arc
 ```
 Internet -> Nginx (TLS + rate limiting) -> 127.0.0.1:8090 (C backend)
 ```
+
+Current production URL:
+- `https://oc.coldnb.com`
 
 Deployment files are in `deploy/`:
 - `realstate.service` — systemd unit with full sandboxing

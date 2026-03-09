@@ -3,7 +3,7 @@
 
 import React, { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import { Search, Plus, Pencil, Trash2, UserRoundPlus, Mail, Phone } from 'lucide-react';
+import { Search, Plus, Pencil, Trash2, UserRoundPlus, Mail, Phone, FileText } from 'lucide-react';
 import { Card } from '../../../components/ui/Card/Card';
 import { Badge } from '../../../components/ui/Badge/Badge';
 import { Button } from '../../../components/ui/Button/Button';
@@ -347,6 +347,17 @@ export default function TenantsPage() {
             <div>
               <span className={styles.notesLabel}>Notes</span>
               <p className={styles.notesText}>{viewingTenant.notes || '-'}</p>
+            </div>
+
+            <div style={{ marginTop: 4 }}>
+              <Link
+                href={`/documents/contract?tenantId=${viewingTenant.id}`}
+                className={styles.smallBtn}
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '8px 16px', textDecoration: 'none', fontWeight: 600, background: 'var(--primary)', color: 'white', border: '1px solid var(--primary)', borderRadius: 'var(--radius-md)' }}
+              >
+                <FileText size={15} />
+                Ver Contrato
+              </Link>
             </div>
 
             <div className={styles.docsWrap}>

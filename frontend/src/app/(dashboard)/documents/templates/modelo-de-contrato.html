@@ -1,0 +1,1538 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Modelo de Contrato — Oliveira Costa Imóveis</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Merriweather:wght@400;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --primary: #1a365d;
+      --primary-light: #2a4a7f;
+      --primary-lighter: #3b6cb5;
+      --accent: #c9a84c;
+      --accent-light: #e8cc6e;
+      --bg-dark: #0f172a;
+      --bg-sidebar: #1e293b;
+      --bg-page: #f1f5f9;
+      --bg-document: #ffffff;
+      --text-dark: #1e293b;
+      --text-muted: #64748b;
+      --text-light: #e2e8f0;
+      --border: #e2e8f0;
+      --placeholder-bg: #fef3c7;
+      --placeholder-border: #f59e0b;
+      --placeholder-text: #92400e;
+      --success: #10b981;
+      --danger: #ef4444;
+      --shadow-sm: 0 1px 2px rgba(0,0,0,0.05);
+      --shadow-md: 0 4px 6px -1px rgba(0,0,0,0.1);
+      --shadow-lg: 0 10px 15px -3px rgba(0,0,0,0.1);
+      --shadow-xl: 0 20px 25px -5px rgba(0,0,0,0.1);
+      --transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: 'Inter', sans-serif;
+      background: var(--bg-page);
+      color: var(--text-dark);
+      display: flex;
+      height: 100vh;
+      overflow: hidden;
+    }
+
+    /* ─── SIDEBAR ─── */
+    .sidebar {
+      width: 280px;
+      min-width: 280px;
+      background: var(--bg-dark);
+      color: var(--text-light);
+      display: flex;
+      flex-direction: column;
+      transition: var(--transition);
+      z-index: 100;
+      box-shadow: 4px 0 20px rgba(0,0,0,0.3);
+    }
+
+    .sidebar.collapsed {
+      width: 60px;
+      min-width: 60px;
+    }
+
+    .sidebar-header {
+      padding: 20px;
+      border-bottom: 1px solid rgba(255,255,255,0.08);
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .sidebar-logo {
+      width: 36px;
+      height: 36px;
+      background: linear-gradient(135deg, var(--accent), var(--accent-light));
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 700;
+      font-size: 16px;
+      color: var(--primary);
+      flex-shrink: 0;
+    }
+
+    .sidebar-title {
+      font-size: 14px;
+      font-weight: 600;
+      line-height: 1.3;
+      overflow: hidden;
+      white-space: nowrap;
+      opacity: 1;
+      transition: var(--transition);
+    }
+
+    .sidebar.collapsed .sidebar-title,
+    .sidebar.collapsed .section-title,
+    .sidebar.collapsed .tool-label,
+    .sidebar.collapsed .tool-badge,
+    .sidebar.collapsed .sidebar-footer-text {
+      opacity: 0;
+      width: 0;
+      overflow: hidden;
+    }
+
+    .sidebar-body {
+      flex: 1;
+      overflow-y: auto;
+      padding: 12px;
+    }
+
+    .sidebar-body::-webkit-scrollbar { width: 4px; }
+    .sidebar-body::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); border-radius: 4px; }
+
+    .section-title {
+      font-size: 10px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 1.5px;
+      color: var(--text-muted);
+      padding: 16px 8px 8px;
+      white-space: nowrap;
+    }
+
+    .tool-btn {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      width: 100%;
+      padding: 10px 12px;
+      background: transparent;
+      border: 1px solid transparent;
+      border-radius: 8px;
+      color: var(--text-light);
+      font-size: 13px;
+      font-family: 'Inter', sans-serif;
+      cursor: pointer;
+      transition: var(--transition);
+      white-space: nowrap;
+    }
+
+    .tool-btn:hover {
+      background: rgba(255,255,255,0.06);
+      border-color: rgba(255,255,255,0.08);
+    }
+
+    .tool-btn:active {
+      transform: scale(0.97);
+    }
+
+    .tool-btn.active {
+      background: rgba(201, 168, 76, 0.15);
+      border-color: rgba(201, 168, 76, 0.3);
+      color: var(--accent-light);
+    }
+
+    .tool-icon {
+      width: 34px;
+      height: 34px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: rgba(255,255,255,0.06);
+      border-radius: 8px;
+      font-size: 16px;
+      flex-shrink: 0;
+      transition: var(--transition);
+    }
+
+    .tool-btn:hover .tool-icon {
+      background: rgba(255,255,255,0.1);
+    }
+
+    .tool-label { font-weight: 500; }
+
+    .tool-badge {
+      margin-left: auto;
+      background: var(--accent);
+      color: var(--primary);
+      font-size: 10px;
+      font-weight: 700;
+      padding: 2px 7px;
+      border-radius: 10px;
+    }
+
+    .sidebar-divider {
+      height: 1px;
+      background: rgba(255,255,255,0.06);
+      margin: 4px 0;
+    }
+
+    .sidebar-footer {
+      padding: 16px 20px;
+      border-top: 1px solid rgba(255,255,255,0.08);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .sidebar-footer-dot {
+      width: 8px;
+      height: 8px;
+      background: var(--success);
+      border-radius: 50%;
+      flex-shrink: 0;
+      animation: pulse 2s infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.4; }
+    }
+
+    .sidebar-footer-text {
+      font-size: 11px;
+      color: var(--text-muted);
+      white-space: nowrap;
+    }
+
+    /* ─── MAIN CONTENT ─── */
+    .main {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    /* ─── TOP BAR ─── */
+    .topbar {
+      height: 56px;
+      background: var(--bg-document);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      padding: 0 24px;
+      gap: 8px;
+      box-shadow: var(--shadow-sm);
+      z-index: 50;
+      flex-shrink: 0;
+    }
+
+    .topbar-toggle {
+      width: 36px;
+      height: 36px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: transparent;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 18px;
+      color: var(--text-dark);
+      transition: var(--transition);
+    }
+
+    .topbar-toggle:hover { background: var(--bg-page); }
+
+    .topbar-breadcrumb {
+      font-size: 13px;
+      color: var(--text-muted);
+      margin-left: 8px;
+    }
+
+    .topbar-breadcrumb span { color: var(--text-dark); font-weight: 600; }
+
+    .topbar-spacer { flex: 1; }
+
+    .topbar-zoom {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      background: var(--bg-page);
+      border-radius: 8px;
+      padding: 4px;
+    }
+
+    .zoom-btn {
+      width: 30px;
+      height: 30px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: transparent;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--text-dark);
+      transition: var(--transition);
+    }
+
+    .zoom-btn:hover { background: var(--bg-document); }
+
+    .zoom-level {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text-muted);
+      min-width: 40px;
+      text-align: center;
+      user-select: none;
+    }
+
+    .topbar-status {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 5px 12px;
+      background: rgba(16, 185, 129, 0.1);
+      border: 1px solid rgba(16, 185, 129, 0.2);
+      border-radius: 20px;
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--success);
+    }
+
+    .topbar-status-dot {
+      width: 6px;
+      height: 6px;
+      background: var(--success);
+      border-radius: 50%;
+    }
+
+    /* ─── DOCUMENT VIEWER ─── */
+    .viewer {
+      flex: 1;
+      overflow: auto;
+      padding: 40px;
+      display: flex;
+      justify-content: center;
+      background: var(--bg-page);
+      background-image:
+        radial-gradient(circle at 20% 50%, rgba(26,54,93,0.03) 0%, transparent 50%),
+        radial-gradient(circle at 80% 50%, rgba(201,168,76,0.03) 0%, transparent 50%);
+    }
+
+    .document-wrapper {
+      transition: transform 0.3s ease;
+      transform-origin: top center;
+    }
+
+    .document {
+      width: 210mm;
+      min-height: 297mm;
+      background: var(--bg-document);
+      padding: 30mm 25mm;
+      box-shadow: var(--shadow-xl), 0 0 0 1px rgba(0,0,0,0.04);
+      border-radius: 2px;
+      font-family: 'Merriweather', 'Georgia', serif;
+      font-size: 11.5pt;
+      line-height: 1.8;
+      color: #1a1a1a;
+      position: relative;
+    }
+
+    .document::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 4px;
+      background: linear-gradient(90deg, var(--primary), var(--accent), var(--primary));
+    }
+
+    /* ─── DOCUMENT TYPOGRAPHY ─── */
+    .doc-title {
+      text-align: center;
+      font-size: 15pt;
+      font-weight: 700;
+      letter-spacing: 1.5px;
+      color: var(--primary);
+      margin-bottom: 28px;
+      padding-bottom: 16px;
+      border-bottom: 2px solid var(--accent);
+    }
+
+    .party-box {
+      border: 2px solid var(--primary);
+      border-radius: 6px;
+      padding: 18px 22px;
+      margin-bottom: 16px;
+      background: linear-gradient(135deg, #f8fafc, #f1f5f9);
+      position: relative;
+    }
+
+    .party-box::before {
+      content: attr(data-label);
+      position: absolute;
+      top: -10px;
+      left: 16px;
+      background: var(--primary);
+      color: white;
+      font-family: 'Inter', sans-serif;
+      font-size: 9px;
+      font-weight: 700;
+      letter-spacing: 1.5px;
+      text-transform: uppercase;
+      padding: 2px 10px;
+      border-radius: 4px;
+    }
+
+    .party-box p {
+      font-size: 10.5pt;
+      margin: 0;
+      line-height: 1.7;
+    }
+
+    .party-box strong {
+      color: var(--primary);
+    }
+
+    .clause {
+      margin-top: 22px;
+      text-align: justify;
+      hyphens: auto;
+    }
+
+    .clause-title {
+      font-weight: 700;
+      color: var(--primary);
+    }
+
+    .clause-subtitle {
+      font-weight: 700;
+      color: var(--primary);
+      text-align: center;
+      font-size: 12pt;
+      margin: 30px 0 16px;
+      letter-spacing: 1px;
+      text-decoration: underline;
+      text-underline-offset: 4px;
+    }
+
+    .clause p, .clause .paragraph {
+      margin-top: 8px;
+      text-align: justify;
+    }
+
+    .clause .sub-clause {
+      margin-top: 6px;
+      padding-left: 12px;
+    }
+
+    .clause em {
+      font-style: italic;
+      color: #374151;
+    }
+
+    /* ─── PLACEHOLDERS ─── */
+    .placeholder {
+      background: var(--placeholder-bg);
+      border: 1px dashed var(--placeholder-border);
+      border-radius: 4px;
+      padding: 1px 8px;
+      font-family: 'Inter', sans-serif;
+      font-size: 9.5pt;
+      font-weight: 600;
+      color: var(--placeholder-text);
+      cursor: help;
+      transition: var(--transition);
+      white-space: nowrap;
+      position: relative;
+    }
+
+    .placeholder:hover {
+      background: #fde68a;
+      border-color: #d97706;
+      transform: translateY(-1px);
+      box-shadow: 0 2px 4px rgba(245, 158, 11, 0.2);
+    }
+
+    .placeholder[data-tooltip]:hover::after {
+      content: attr(data-tooltip);
+      position: absolute;
+      bottom: calc(100% + 6px);
+      left: 50%;
+      transform: translateX(-50%);
+      background: var(--bg-dark);
+      color: white;
+      font-size: 10px;
+      font-weight: 500;
+      padding: 4px 10px;
+      border-radius: 6px;
+      white-space: nowrap;
+      z-index: 1000;
+      pointer-events: none;
+      animation: tooltipIn 0.2s ease;
+    }
+
+    @keyframes tooltipIn {
+      from { opacity: 0; transform: translateX(-50%) translateY(4px); }
+      to { opacity: 1; transform: translateX(-50%) translateY(0); }
+    }
+
+    .placeholders-hidden .placeholder {
+      background: transparent;
+      border-color: transparent;
+      color: inherit;
+      font-family: inherit;
+      font-size: inherit;
+      font-weight: inherit;
+    }
+
+    /* ─── SIGNATURES ─── */
+    .signatures {
+      margin-top: 50px;
+      text-align: center;
+    }
+
+    .signatures .date-line {
+      text-align: right;
+      margin-bottom: 50px;
+      font-style: italic;
+    }
+
+    .sig-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 60px;
+      margin-bottom: 40px;
+    }
+
+    .sig-block {
+      flex: 1;
+      text-align: center;
+    }
+
+    .sig-line {
+      border-top: 1px solid #1a1a1a;
+      padding-top: 8px;
+      margin-top: 50px;
+    }
+
+    .sig-name {
+      font-weight: 700;
+      font-size: 10.5pt;
+    }
+
+    .sig-role {
+      font-size: 9.5pt;
+      color: var(--text-muted);
+      margin-top: 2px;
+    }
+
+    .witnesses-title {
+      font-weight: 700;
+      font-size: 10.5pt;
+      margin-bottom: 10px;
+      color: var(--primary);
+    }
+
+    .witness-info {
+      font-size: 9.5pt;
+      color: var(--text-muted);
+      margin-top: 4px;
+    }
+
+    /* ─── TOAST ─── */
+    .toast {
+      position: fixed;
+      bottom: 30px;
+      right: 30px;
+      background: var(--bg-dark);
+      color: white;
+      padding: 14px 24px;
+      border-radius: 12px;
+      font-size: 13px;
+      font-weight: 500;
+      box-shadow: var(--shadow-xl);
+      transform: translateY(100px);
+      opacity: 0;
+      transition: all 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+      z-index: 9999;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .toast.show {
+      transform: translateY(0);
+      opacity: 1;
+    }
+
+    .toast-icon { font-size: 18px; }
+
+    /* ─── MODAL ─── */
+    .modal-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.5);
+      backdrop-filter: blur(4px);
+      z-index: 9000;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      opacity: 0;
+      visibility: hidden;
+      transition: var(--transition);
+    }
+
+    .modal-overlay.show {
+      opacity: 1;
+      visibility: visible;
+    }
+
+    .modal {
+      background: white;
+      border-radius: 16px;
+      padding: 32px;
+      max-width: 480px;
+      width: 90%;
+      box-shadow: var(--shadow-xl);
+      transform: scale(0.9) translateY(20px);
+      transition: all 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+    }
+
+    .modal-overlay.show .modal {
+      transform: scale(1) translateY(0);
+    }
+
+    .modal h3 {
+      font-size: 18px;
+      margin-bottom: 8px;
+      color: var(--primary);
+    }
+
+    .modal p {
+      font-size: 13px;
+      color: var(--text-muted);
+      margin-bottom: 20px;
+      line-height: 1.6;
+    }
+
+    .modal-stats {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+      margin-bottom: 24px;
+    }
+
+    .modal-stat {
+      background: var(--bg-page);
+      border-radius: 10px;
+      padding: 14px;
+      text-align: center;
+    }
+
+    .modal-stat-value {
+      font-size: 24px;
+      font-weight: 700;
+      color: var(--primary);
+    }
+
+    .modal-stat-label {
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      color: var(--text-muted);
+      font-weight: 600;
+      margin-top: 4px;
+    }
+
+    .modal-actions {
+      display: flex;
+      gap: 10px;
+      justify-content: flex-end;
+    }
+
+    .btn-modal {
+      padding: 10px 20px;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 600;
+      font-family: 'Inter', sans-serif;
+      cursor: pointer;
+      transition: var(--transition);
+      border: none;
+    }
+
+    .btn-modal.primary {
+      background: var(--primary);
+      color: white;
+    }
+
+    .btn-modal.primary:hover {
+      background: var(--primary-light);
+    }
+
+    .btn-modal.secondary {
+      background: var(--bg-page);
+      color: var(--text-dark);
+    }
+
+    .btn-modal.secondary:hover {
+      background: var(--border);
+    }
+
+    /* ─── PLACEHOLDER COUNTER BADGE ─── */
+    .placeholder-counter {
+      position: fixed;
+      bottom: 30px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: var(--bg-dark);
+      color: var(--text-light);
+      padding: 10px 20px;
+      border-radius: 30px;
+      font-size: 12px;
+      font-weight: 500;
+      box-shadow: var(--shadow-lg);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      z-index: 200;
+    }
+
+    .placeholder-counter .count {
+      background: var(--accent);
+      color: var(--primary);
+      font-weight: 700;
+      padding: 1px 8px;
+      border-radius: 10px;
+      font-size: 11px;
+    }
+
+    /* ─── FULLSCREEN ─── */
+    body.fullscreen .sidebar,
+    body.fullscreen .topbar {
+      display: none;
+    }
+
+    body.fullscreen .main {
+      width: 100%;
+    }
+
+    body.fullscreen .viewer {
+      padding-top: 20px;
+    }
+
+    .fullscreen-exit {
+      position: fixed;
+      top: 16px;
+      right: 16px;
+      z-index: 9999;
+      display: none;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 18px;
+      background: var(--bg-dark);
+      color: var(--text-light);
+      border: 1px solid rgba(255,255,255,0.15);
+      border-radius: 10px;
+      font-family: 'Inter', sans-serif;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      box-shadow: var(--shadow-lg);
+      transition: var(--transition);
+      animation: fadeSlideIn 0.3s ease;
+    }
+
+    .fullscreen-exit:hover {
+      background: var(--primary-light);
+      transform: translateY(-1px);
+    }
+
+    .fullscreen-exit kbd {
+      background: rgba(255,255,255,0.15);
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-size: 10px;
+      font-family: 'Inter', sans-serif;
+    }
+
+    body.fullscreen .fullscreen-exit {
+      display: flex;
+    }
+
+    @keyframes fadeSlideIn {
+      from { opacity: 0; transform: translateY(-10px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    /* ─── PRINT ─── */
+    @media print {
+      .sidebar, .topbar, .placeholder-counter, .toast { display: none !important; }
+      body { background: white; }
+      .viewer { padding: 0; overflow: visible; }
+      .document-wrapper { transform: none !important; }
+      .document {
+        box-shadow: none;
+        width: 100%;
+        padding: 20mm;
+        min-height: auto;
+      }
+      .document::before { display: none; }
+      .placeholder {
+        background: transparent;
+        border: none;
+        color: inherit;
+        font-family: inherit;
+        font-size: inherit;
+        font-weight: inherit;
+        padding: 0;
+      }
+    }
+
+    /* ─── SCROLLBAR ─── */
+    .viewer::-webkit-scrollbar { width: 8px; }
+    .viewer::-webkit-scrollbar-track { background: transparent; }
+    .viewer::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+    .viewer::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+  </style>
+</head>
+<body>
+
+  <!-- ─── SIDEBAR ─── -->
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar-header">
+      <div class="sidebar-logo">OC</div>
+      <div class="sidebar-title">Oliveira Costa<br>Gestão Imobiliária</div>
+    </div>
+
+    <div class="sidebar-body">
+      <div class="section-title">Documento</div>
+
+      <button class="tool-btn" onclick="downloadPDF()">
+        <div class="tool-icon">&#128196;</div>
+        <span class="tool-label">Baixar PDF</span>
+      </button>
+
+      <button class="tool-btn" onclick="window.print()">
+        <div class="tool-icon">&#128424;</div>
+        <span class="tool-label">Imprimir</span>
+      </button>
+
+      <button class="tool-btn" onclick="duplicateTemplate()">
+        <div class="tool-icon">&#128203;</div>
+        <span class="tool-label">Duplicar Modelo</span>
+      </button>
+
+      <div class="sidebar-divider"></div>
+      <div class="section-title">Visualização</div>
+
+      <button class="tool-btn" id="togglePlaceholders" onclick="togglePlaceholders()">
+        <div class="tool-icon">&#127991;</div>
+        <span class="tool-label">Placeholders</span>
+        <span class="tool-badge" id="phBadge">ON</span>
+      </button>
+
+      <button class="tool-btn" onclick="toggleFullscreen()">
+        <div class="tool-icon">&#9974;</div>
+        <span class="tool-label">Tela Cheia</span>
+      </button>
+
+      <button class="tool-btn" onclick="fitToScreen()">
+        <div class="tool-icon">&#128204;</div>
+        <span class="tool-label">Ajustar à Tela</span>
+      </button>
+
+      <div class="sidebar-divider"></div>
+      <div class="section-title">Ferramentas</div>
+
+      <button class="tool-btn" onclick="showInfo()">
+        <div class="tool-icon">&#128202;</div>
+        <span class="tool-label">Info do Modelo</span>
+      </button>
+
+      <button class="tool-btn" onclick="listPlaceholders()">
+        <div class="tool-icon">&#128209;</div>
+        <span class="tool-label">Lista de Campos</span>
+      </button>
+
+      <button class="tool-btn" onclick="copyAsText()">
+        <div class="tool-icon">&#128220;</div>
+        <span class="tool-label">Copiar Texto</span>
+      </button>
+
+      <button class="tool-btn" onclick="scrollToTop()">
+        <div class="tool-icon">&#11014;</div>
+        <span class="tool-label">Voltar ao Topo</span>
+      </button>
+    </div>
+
+    <div class="sidebar-footer">
+      <div class="sidebar-footer-dot"></div>
+      <div class="sidebar-footer-text">Modelo ativo — v1.0</div>
+    </div>
+  </aside>
+
+  <!-- ─── TOP BAR ─── -->
+  <div class="main">
+    <header class="topbar">
+      <button class="topbar-toggle" onclick="toggleSidebar()" title="Alternar painel lateral">&#9776;</button>
+      <div class="topbar-breadcrumb">Documentos &rsaquo; Modelos &rsaquo; <span>Contrato de Locação Residencial</span></div>
+      <div class="topbar-spacer"></div>
+
+      <div class="topbar-zoom">
+        <button class="zoom-btn" onclick="zoomOut()" title="Diminuir">&#8722;</button>
+        <span class="zoom-level" id="zoomLevel">100%</span>
+        <button class="zoom-btn" onclick="zoomIn()" title="Aumentar">&#43;</button>
+      </div>
+
+      <div class="topbar-status">
+        <div class="topbar-status-dot"></div>
+        Modelo
+      </div>
+    </header>
+
+    <!-- ─── DOCUMENT VIEWER ─── -->
+    <div class="viewer" id="viewer">
+      <div class="document-wrapper" id="documentWrapper">
+        <div class="document" id="contract">
+
+          <div class="doc-title">CONTRATO DE LOCAÇÃO DE IMÓVEL RESIDENCIAL</div>
+
+          <!-- LOCADOR -->
+          <div class="party-box" data-label="LOCADOR">
+            <p>
+              <strong>LOCADOR — ESPÓLIO DE ORLANDO OLIVEIRA COSTA</strong>, neste ato representado por seu
+              inventariante André Luiz de Oliveira Costa, brasileiro, solteiro, advogado, portador do RG n°
+              710871 SSP/MS e do CPF n° 601.110.461-49, com endereço profissional na Rua 14 de Julho n°
+              164, Bairro Santa Dorothéa em Campo Grande/MS.
+            </p>
+          </div>
+
+          <!-- LOCATÁRIO -->
+          <div class="party-box" data-label="LOCATÁRIO">
+            <p>
+              <strong>LOCATÁRIO(S)</strong> —
+              <span class="placeholder" data-tooltip="Nome completo do inquilino">{{LOCATARIO_NOME}}</span>,
+              RG <span class="placeholder" data-tooltip="Documento de identidade">{{LOCATARIO_RG}}</span>,
+              inscrito no CPF sob o n.º
+              <span class="placeholder" data-tooltip="CPF do inquilino">{{LOCATARIO_CPF}}</span>,
+              <span class="placeholder" data-tooltip="Profissão do inquilino">{{LOCATARIO_PROFISSAO}}</span>,
+              residente e domiciliado na
+              <span class="placeholder" data-tooltip="Endereço atual do inquilino">{{LOCATARIO_ENDERECO}}</span>.
+            </p>
+          </div>
+
+          <!-- CLÁUSULA PRIMEIRA -->
+          <div class="clause">
+            <p>
+              <span class="clause-title">CLÁUSULA PRIMEIRA — OBJETO DA LOCAÇÃO</span> — Imóvel para uso exclusivamente residencial
+              pelo morador <span class="placeholder" data-tooltip="Nome do morador">{{LOCATARIO_NOME}}</span>,
+              consistindo em uma suíte mobiliada,
+              situado à Av. Eduardo Elias Zahran, nº 438,
+              Bairro Jardim Paulista em Campo Grande/MS — CEP 79051-485,
+              contendo cama de casal, geladeira, fogão, guarda-roupas e banheiro com chuveiro elétrico,
+              para 01 (uma) pessoa(s),
+              incluso água e energia elétrica, wi-fi em caráter de cortesia.
+            </p>
+            <p><strong>Parágrafo único.</strong></p>
+          </div>
+
+          <!-- CLÁUSULA SEGUNDA -->
+          <div class="clause">
+            <p>
+              <span class="clause-title">CLÁUSULA SEGUNDA — PRAZO DA LOCAÇÃO</span> — A presente locação tem prazo determinado
+              de <span class="placeholder" data-tooltip="Duração do contrato (ex: 6 meses)">{{CONTRATO_PRAZO}}</span>
+              com início em <span class="placeholder" data-tooltip="Data de início (dd/mm/aaaa)">{{CONTRATO_INICIO}}</span>
+              a <span class="placeholder" data-tooltip="Data de término (dd/mm/aaaa)">{{CONTRATO_FIM}}</span>,
+              findo o qual o imóvel deverá ser devolvido ao LOCADOR, independentemente de aviso ou notificação.
+            </p>
+          </div>
+
+          <!-- CLÁUSULA TERCEIRA -->
+          <div class="clause">
+            <p>
+              <span class="clause-title">CLÁUSULA TERCEIRA — VALOR DA LOCAÇÃO</span> — O valor do aluguel será de
+              R$ <span class="placeholder" data-tooltip="Valor numérico do aluguel">{{ALUGUEL_VALOR}}</span>
+              (<span class="placeholder" data-tooltip="Valor por extenso">{{ALUGUEL_EXTENSO}}</span>)
+              com vencimento todo dia <span class="placeholder" data-tooltip="Dia do vencimento">{{ALUGUEL_VENCIMENTO}}</span>.
+            </p>
+            <p class="sub-clause">
+              § 1º — O valor do aluguel será reajustado a cada 12 (doze) meses, de acordo com a variação do
+              índice IGPM/FGV, ou outro índice que vier a substituí-lo.
+            </p>
+            <p class="sub-clause">
+              § 2° — O vencimento do aluguel será todo dia
+              <span class="placeholder" data-tooltip="Dia do vencimento">{{ALUGUEL_VENCIMENTO}}</span>
+              de cada mês.
+            </p>
+            <p class="sub-clause">
+              § 3° — Ocorrendo atraso o LOCATÁRIO arcará com pagamento de multa de 10%, juros moratórios
+              de 1% a.m., correção monetária pelo índice IGPM/FGV ou outro índice que vier a substituí-lo.
+            </p>
+            <p class="sub-clause">
+              § 4° — Os pagamentos dos aluguéis e demais encargos deverão ser realizados no seguinte
+              endereço: Rua 14 de Julho, nº 164, Vila Santa Dorothéa, em Campo Grande/MS, CEP 79004-394,
+              em horário comercial.
+            </p>
+          </div>
+
+          <!-- CONDIÇÕES GERAIS -->
+          <div class="clause-subtitle">CONDIÇÕES GERAIS</div>
+
+          <!-- CLÁUSULA QUARTA -->
+          <div class="clause">
+            <p>
+              <span class="clause-title">CLÁUSULA QUARTA</span> — No término da Locação, o LOCATÁRIO deverá restituir o imóvel ao
+              LOCADOR, independentemente de qualquer notificação judicial ou extrajudicial, no estado em
+              que o recebeu, devidamente pintado com material de primeira linha e com todas as portas,
+              janelas, vidros, fechaduras, piso, forro, instalações elétricas e hidráulicas funcionando
+              regularmente.
+            </p>
+          </div>
+
+          <!-- CLÁUSULA QUINTA -->
+          <div class="clause">
+            <p>
+              <span class="clause-title">CLÁUSULA QUINTA</span> — O presente contrato é para moradia exclusiva do LOCATÁRIO, sendo
+              vedada a ocupação de terceiros, sem a expressa autorização mediante negociação com o
+              proprietário para estipulação de novo valor adicional a este contrato, bem como declara que
+              recebe neste momento as Regras de Convivência comunitária anexa a este instrumento, sendo
+              que o valor constante da cláusula do pagamento é válido para apenas um morador.
+            </p>
+          </div>
+
+          <!-- CLÁUSULA SEXTA -->
+          <div class="clause">
+            <p>
+              <span class="clause-title">CLÁUSULA SEXTA</span> — Durante a vigência da locação, não poderá o LOCATÁRIO, sem
+              consentimento por escrito do LOCADOR, ceder, emprestar ou sublocar no todo ou em parte, o
+              imóvel, objeto deste contrato.
+            </p>
+          </div>
+
+          <!-- CLÁUSULA SÉTIMA -->
+          <div class="clause">
+            <p>
+              <span class="clause-title">CLÁUSULA SÉTIMA</span> — Deverá o LOCATÁRIO cientificar imediatamente o LOCADOR de
+              quaisquer documentos de cobrança de tributos ou encargos, bem como quaisquer intimações ou
+              exigências de autoridades públicas, ainda que dirigidas a ele LOCADOR, sob pena de não o
+              fazendo ou demorando-se a fazê-lo, responder civil ou criminalmente pelos prejuízos advindos.
+            </p>
+          </div>
+
+          <!-- CLÁUSULA OITAVA -->
+          <div class="clause">
+            <p>
+              <span class="clause-title">CLÁUSULA OITAVA</span> — Se o LOCADOR necessitar de intervenção de advogado para receber
+              aluguéis ou encargos, seja de forma extrajudicial ou judicial, pagará o LOCATÁRIO, além das
+              cominações previstas neste instrumento, os honorários do profissional contratado, na base de
+              10% (dez por cento) no primeiro caso e 20% (vinte por cento) no segundo caso, sobre o valor
+              total devido.
+            </p>
+          </div>
+
+          <!-- CLÁUSULA NONA -->
+          <div class="clause">
+            <p>
+              <span class="clause-title">CLÁUSULA NONA</span> — Expirado o prazo do presente contrato, poderá o mesmo ser renovado em
+              novas bases, de comum acordo entre as partes. Caso, porém, continue o LOCATÁRIO no imóvel,
+              sem pactuar a renovação, permanecerão em vigor todas as cláusulas e condições do presente
+              instrumento até a entrega real e definitiva do imóvel locado, com exceção do valor do aluguel
+              que será corrigido conforme lei em vigor.
+            </p>
+          </div>
+
+          <!-- CLÁUSULA DÉCIMA -->
+          <div class="clause">
+            <p>
+              <span class="clause-title">CLÁUSULA DÉCIMA</span> — O presente contrato será resolvido de plano nos casos de incêndio,
+              vendaval, desapropriação, obras determinadas pela autoridade pública que importem na
+              impossibilidade de habitação ou utilização do imóvel por mais de 30 (trinta) dias, determinações
+              judiciais ou quaisquer outros fatos de força maior que impeçam o uso do imóvel locado,
+              independentemente de notificação ou interpelação e sem conferir ao LOCATÁRIO qualquer
+              direito de pleitear indenização ao LOCADOR, quando este não houver dado causa, ficando,
+              entretanto, assegurado a ele o direito de pleitear de terceiros possíveis indenizações.
+            </p>
+          </div>
+
+          <!-- CLÁUSULA DÉCIMA PRIMEIRA -->
+          <div class="clause">
+            <p>
+              <span class="clause-title">CLÁUSULA DÉCIMA PRIMEIRA</span> — É expressamente vedado ao LOCATÁRIO introduzir no
+              imóvel quaisquer benfeitorias úteis, necessárias ou voluptuárias sem consentimento expresso
+              do LOCADOR. Se mesmo sem autorização assim proceder, ditas benfeitorias serão a critério do
+              LOCADOR consideradas incorporadas ao imóvel e não darão margem à direito de retenção ou
+              indenização, ou serão desfeitas às custas do LOCATÁRIO.
+            </p>
+            <p class="sub-clause">
+              <strong>Parágrafo único</strong> — Os reparos, os consertos e a manutenção do imóvel, além de serem
+              efetuados com o consentimento do LOCADOR, deverão ser executados com material de boa
+              qualidade e mão de obra qualificada, de modo a mantê-lo permanentemente em condições de uso.
+            </p>
+          </div>
+
+          <!-- CLÁUSULA DÉCIMA SEGUNDA -->
+          <div class="clause">
+            <p>
+              <span class="clause-title">CLÁUSULA DÉCIMA SEGUNDA</span> — Constitui-se em obrigação do LOCATÁRIO manter o imóvel
+              locado com o mesmo cuidado como se fosse seu. Para tanto, declara havê-lo recebido em
+              perfeitas condições, conforme o termo de vistoria o qual passará a fazer parte integrante deste
+              contrato.
+            </p>
+          </div>
+
+          <!-- CLÁUSULA DÉCIMA TERCEIRA -->
+          <div class="clause">
+            <p>
+              <span class="clause-title">CLÁUSULA DÉCIMA TERCEIRA</span> — O LOCATÁRIO não poderá sob qualquer pretexto impedir
+              a visita periódica do LOCADOR com o fim de vistoriar o seu bom uso e zelo.
+            </p>
+          </div>
+
+          <!-- CLÁUSULA DÉCIMA QUARTA -->
+          <div class="clause">
+            <p>
+              <span class="clause-title">CLÁUSULA DÉCIMA QUARTA</span> — Assume o LOCATÁRIO o formal compromisso de comunicar
+              expressamente o interesse em desocupar o imóvel 30 (trinta) dias antes da efetiva desocupação,
+              devendo ainda solicitar ao LOCADOR que faça uma vistoria no imóvel, a fim de constatar o seu
+              estado de conservação, sob pena de arcar com mais uma mensalidade da locação.
+            </p>
+          </div>
+
+          <!-- CLÁUSULA DÉCIMA QUINTA -->
+          <div class="clause">
+            <p>
+              <span class="clause-title">CLÁUSULA DÉCIMA QUINTA</span> — A efetiva devolução do imóvel implica em efetiva entrega das
+              chaves, sendo que para que tenha eficácia, deverá ser feita contrarrecibo, no endereço declinado
+              no § 4º da Cláusula Terceira.
+            </p>
+          </div>
+
+          <!-- CLÁUSULA DÉCIMA SEXTA -->
+          <div class="clause">
+            <p>
+              <span class="clause-title">CLÁUSULA DÉCIMA SEXTA</span> — A tolerância do LOCADOR pelo não cumprimento de qualquer
+              ato ou obrigação que em virtude deste contrato deva ser praticada ou cumprida, não poderá ser
+              tida como alteração ou novação do contido neste instrumento, sendo convencionado o seu
+              reconhecimento como mera liberalidade.
+            </p>
+          </div>
+
+          <!-- CLÁUSULA DÉCIMA SÉTIMA -->
+          <div class="clause">
+            <p>
+              <span class="clause-title">CLÁUSULA DÉCIMA SÉTIMA</span> — É expressamente proibido o uso de aparelhos eletrônicos
+              de alta consumação energética no imóvel locado, incluindo, mas não se limitando a: fogões e fornos
+              elétricos ou de indução, ar-condicionado portátil ou fixo, aquecedores elétricos, radiadores,
+              secadoras de roupa, máquinas de lavar de grande porte, churrasqueiras elétricas, fritadeiras
+              industriais, e similares. Caso o morador deseje utilizar algum aparelho desta natureza, deverá
+              comunicar previamente ao LOCADOR para negociação de ajuste contratual e eventual adequação
+              do valor do aluguel.
+            </p>
+          </div>
+
+          <!-- CLÁUSULA DÉCIMA OITAVA (NEW — Furniture Repair) -->
+          <div class="clause">
+            <p>
+              <span class="clause-title">CLÁUSULA DÉCIMA OITAVA</span> — Os móveis e equipamentos fornecidos pelo LOCADOR,
+              conforme descrito na Cláusula Primeira, serão objeto de manutenção conforme as seguintes condições:
+            </p>
+            <p class="sub-clause">
+              § 1º — Danos decorrentes de <strong>desgaste natural pelo uso regular</strong> serão reparados ou substituídos
+              pelo LOCADOR, sem custo para o LOCATÁRIO, desde que devidamente comunicados à administração
+              para avaliação prévia.
+            </p>
+            <p class="sub-clause">
+              § 2º — Danos decorrentes de <strong>mau uso, negligência ou uso indevido</strong> por parte do LOCATÁRIO
+              serão integralmente custeados pelo mesmo, conforme avaliação da administração. O LOCATÁRIO
+              será notificado do valor do reparo ou substituição e deverá efetuar o pagamento no prazo de
+              15 (quinze) dias a partir da notificação.
+            </p>
+            <p class="sub-clause">
+              § 3º — A classificação do tipo de dano (desgaste natural ou mau uso) será de competência
+              exclusiva da administração, que realizará vistoria técnica e emitirá laudo justificativo quando solicitado.
+            </p>
+          </div>
+
+          <!-- CLÁUSULA DÉCIMA NONA (NEW — Regimento Interno) -->
+          <div class="clause">
+            <p>
+              <span class="clause-title">CLÁUSULA DÉCIMA NONA</span> — O LOCATÁRIO declara ter pleno conhecimento e se compromete
+              a cumprir integralmente o <strong>Regimento Interno</strong> do imóvel, que constitui parte integrante deste contrato
+              na qualidade de <strong>Anexo I</strong>. O descumprimento das normas do Regimento Interno será considerado
+              infração contratual, sujeitando o LOCATÁRIO às penalidades previstas neste instrumento.
+            </p>
+            <p class="sub-clause">
+              <strong>Parágrafo único</strong> — O LOCADOR reserva-se o direito de atualizar o Regimento Interno mediante
+              comunicação prévia de 15 (quinze) dias ao LOCATÁRIO, passando as novas regras a vigorar
+              automaticamente após este prazo.
+            </p>
+          </div>
+
+          <!-- CLÁUSULA VIGÉSIMA (Early Termination) -->
+          <div class="clause">
+            <p>
+              <span class="clause-title">CLÁUSULA VIGÉSIMA</span> — Caso o LOCATÁRIO deseje desocupar o imóvel antes do término
+              do contrato, deverá comunicar formalmente à administração com antecedência mínima de
+              15 (quinze) dias.
+            </p>
+            <p class="sub-clause">
+              § 1º — Sendo a comunicação realizada dentro do prazo estipulado, nenhuma cobrança adicional
+              será aplicada ao LOCATÁRIO, ficando este responsável apenas pelos aluguéis e encargos devidos
+              até a data efetiva da desocupação.
+            </p>
+            <p class="sub-clause">
+              § 2º — Caso o LOCATÁRIO desocupe o imóvel sem a devida comunicação prévia de 15 (quinze) dias,
+              ou abandone o imóvel sem aviso, o ato será considerado <strong>quebra de contrato</strong>, ficando o
+              LOCATÁRIO obrigado ao pagamento de multa equivalente a <strong>30% (trinta por cento) do valor
+              total dos aluguéis remanescentes</strong> até o término originalmente previsto do contrato.
+            </p>
+            <p class="sub-clause">
+              § 3º — O valor da multa por quebra de contrato será calculado com base no aluguel vigente
+              à data da desocupação, multiplicado pelo número de meses restantes e aplicado o percentual
+              de 30% sobre o montante total.
+            </p>
+          </div>
+
+          <!-- CLÁUSULA VIGÉSIMA PRIMEIRA (Penalty) -->
+          <div class="clause">
+            <p>
+              <span class="clause-title">CLÁUSULA VIGÉSIMA PRIMEIRA</span> — Fica estipulada multa correspondente a 03 (três) aluguéis à
+              parte que infringir qualquer uma das cláusulas.
+            </p>
+            <p class="sub-clause">
+              <strong>Parágrafo único</strong> — A multa será sempre paga integralmente, seja qual for o tempo decorrido do
+              presente contrato e não será compensatória de prejuízos e/ou danos causados ao imóvel, nem
+              poderá ser tida como indenizatória de aluguéis ou encargos devidos.
+            </p>
+          </div>
+
+          <!-- CLOSING / SIGNATURES -->
+          <div class="signatures">
+            <p style="text-align: justify; margin-bottom: 8px;">
+              E por estarem assim, justos e contratados, cientes e de acordo com tudo o quanto neste
+              instrumento foi lavrado, firmam em formato digital através do WhatsApp.
+            </p>
+
+            <div class="date-line">
+              Campo Grande/MS, <span class="placeholder" data-tooltip="Data de assinatura do contrato">{{CONTRATO_DATA}}</span>.
+            </div>
+
+            <div class="sig-row">
+              <div class="sig-block">
+                <div class="sig-line">
+                  <div class="sig-name">ESPÓLIO DE ORLANDO OLIVEIRA COSTA</div>
+                  <div class="sig-role">LOCADOR</div>
+                </div>
+              </div>
+              <div class="sig-block">
+                <div class="sig-line">
+                  <div class="sig-name"><span class="placeholder" data-tooltip="Nome do inquilino">{{LOCATARIO_NOME}}</span></div>
+                  <div class="sig-role">LOCATÁRIO</div>
+                </div>
+              </div>
+            </div>
+
+          </div>
+
+        </div><!-- .document -->
+      </div><!-- .document-wrapper -->
+    </div><!-- .viewer -->
+  </div><!-- .main -->
+
+  <!-- ─── PLACEHOLDER COUNTER ─── -->
+  <div class="placeholder-counter" id="phCounter">
+    <span>&#127991;</span>
+    Campos variáveis: <span class="count" id="phCount">0</span>
+  </div>
+
+  <!-- ─── FULLSCREEN EXIT BUTTON ─── -->
+  <button class="fullscreen-exit" onclick="toggleFullscreen()">
+    &#10005; Sair da Tela Cheia <kbd>ESC</kbd>
+  </button>
+
+  <!-- ─── TOAST ─── -->
+  <div class="toast" id="toast">
+    <span class="toast-icon" id="toastIcon"></span>
+    <span id="toastMsg"></span>
+  </div>
+
+  <!-- ─── INFO MODAL ─── -->
+  <div class="modal-overlay" id="infoModal">
+    <div class="modal">
+      <h3>&#128202; Informações do Modelo</h3>
+      <p>Resumo do modelo de contrato de locação residencial atualmente carregado.</p>
+      <div class="modal-stats">
+        <div class="modal-stat">
+          <div class="modal-stat-value" id="statClauses">0</div>
+          <div class="modal-stat-label">Cláusulas</div>
+        </div>
+        <div class="modal-stat">
+          <div class="modal-stat-value" id="statPlaceholders">0</div>
+          <div class="modal-stat-label">Campos Variáveis</div>
+        </div>
+        <div class="modal-stat">
+          <div class="modal-stat-value" id="statWords">0</div>
+          <div class="modal-stat-label">Palavras</div>
+        </div>
+        <div class="modal-stat">
+          <div class="modal-stat-value" id="statPages">0</div>
+          <div class="modal-stat-label">Páginas (est.)</div>
+        </div>
+      </div>
+      <div class="modal-actions">
+        <button class="btn-modal secondary" onclick="closeModal('infoModal')">Fechar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ─── FIELDS MODAL ─── -->
+  <div class="modal-overlay" id="fieldsModal">
+    <div class="modal" style="max-width: 560px;">
+      <h3>&#128209; Lista de Campos Variáveis</h3>
+      <p>Todos os placeholders disponíveis neste modelo de contrato.</p>
+      <div id="fieldsList" style="max-height: 350px; overflow-y: auto; margin-bottom: 20px;"></div>
+      <div class="modal-actions">
+        <button class="btn-modal secondary" onclick="closeModal('fieldsModal')">Fechar</button>
+        <button class="btn-modal primary" onclick="copyFieldsList()">Copiar Lista</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // ─── STATE ───
+    let currentZoom = 100;
+    let placeholdersVisible = true;
+
+    // ─── INIT ───
+    document.addEventListener('DOMContentLoaded', () => {
+      updatePlaceholderCount();
+    });
+
+    // ─── ZOOM ───
+    function zoomIn() {
+      if (currentZoom >= 200) return;
+      currentZoom += 10;
+      applyZoom();
+    }
+
+    function zoomOut() {
+      if (currentZoom <= 50) return;
+      currentZoom -= 10;
+      applyZoom();
+    }
+
+    function applyZoom() {
+      document.getElementById('documentWrapper').style.transform = `scale(${currentZoom / 100})`;
+      document.getElementById('zoomLevel').textContent = currentZoom + '%';
+    }
+
+    function fitToScreen() {
+      const viewer = document.getElementById('viewer');
+      const doc = document.querySelector('.document');
+      const ratio = (viewer.clientWidth - 80) / doc.offsetWidth;
+      currentZoom = Math.round(Math.min(ratio, 1.2) * 100);
+      applyZoom();
+      toast('&#128204;', 'Ajustado à tela');
+    }
+
+    // ─── SIDEBAR ───
+    function toggleSidebar() {
+      document.getElementById('sidebar').classList.toggle('collapsed');
+    }
+
+    // ─── PLACEHOLDERS ───
+    function togglePlaceholders() {
+      placeholdersVisible = !placeholdersVisible;
+      document.getElementById('contract').classList.toggle('placeholders-hidden', !placeholdersVisible);
+      document.getElementById('phBadge').textContent = placeholdersVisible ? 'ON' : 'OFF';
+      document.getElementById('phCounter').style.display = placeholdersVisible ? 'flex' : 'none';
+      toast(placeholdersVisible ? '&#127991;' : '&#128065;', placeholdersVisible ? 'Placeholders visíveis' : 'Placeholders ocultos');
+    }
+
+    function updatePlaceholderCount() {
+      const count = document.querySelectorAll('.placeholder').length;
+      document.getElementById('phCount').textContent = count;
+    }
+
+    // ─── FULLSCREEN ───
+    function toggleFullscreen() {
+      document.body.classList.toggle('fullscreen');
+      const isFs = document.body.classList.contains('fullscreen');
+      toast(isFs ? '&#9974;' : '&#9974;', isFs ? 'Modo tela cheia' : 'Modo normal');
+    }
+
+    // ─── PDF DOWNLOAD ───
+    function downloadPDF() {
+      toast('&#9203;', 'Gerando PDF...');
+      const element = document.getElementById('contract');
+
+      const opt = {
+        margin: 0,
+        filename: 'Contrato_de_Locacao_Modelo.pdf',
+        image: { type: 'jpeg', quality: 0.98 },
+        html2canvas: { scale: 2, useCORS: true, letterRendering: true },
+        jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
+        pagebreak: { mode: ['avoid-all', 'css', 'legacy'] }
+      };
+
+      html2pdf().set(opt).from(element).save().then(() => {
+        toast('&#9989;', 'PDF salvo com sucesso!');
+      });
+    }
+
+    // ─── DUPLICATE TEMPLATE ───
+    function duplicateTemplate() {
+      const content = document.getElementById('contract').outerHTML;
+      const blob = new Blob([document.documentElement.outerHTML], { type: 'text/html' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'Contrato_de_Locacao_Copia.html';
+      a.click();
+      URL.revokeObjectURL(url);
+      toast('&#128203;', 'Modelo duplicado e baixado');
+    }
+
+    // ─── COPY TEXT ───
+    function copyAsText() {
+      const text = document.getElementById('contract').innerText;
+      navigator.clipboard.writeText(text).then(() => {
+        toast('&#128203;', 'Texto copiado para a área de transferência');
+      });
+    }
+
+    // ─── SCROLL ───
+    function scrollToTop() {
+      document.getElementById('viewer').scrollTo({ top: 0, behavior: 'smooth' });
+    }
+
+    // ─── INFO MODAL ───
+    function showInfo() {
+      const doc = document.getElementById('contract');
+      const clauses = doc.querySelectorAll('.clause-title').length;
+      const placeholders = doc.querySelectorAll('.placeholder').length;
+      const words = doc.innerText.split(/\s+/).length;
+      const pages = Math.ceil(words / 350);
+
+      document.getElementById('statClauses').textContent = clauses;
+      document.getElementById('statPlaceholders').textContent = placeholders;
+      document.getElementById('statWords').textContent = words.toLocaleString('pt-BR');
+      document.getElementById('statPages').textContent = pages;
+
+      openModal('infoModal');
+    }
+
+    // ─── FIELDS LIST MODAL ───
+    function listPlaceholders() {
+      const phs = document.querySelectorAll('.placeholder');
+      const unique = new Map();
+
+      phs.forEach(ph => {
+        const name = ph.textContent.trim();
+        const tooltip = ph.dataset.tooltip || '';
+        if (!unique.has(name)) unique.set(name, tooltip);
+      });
+
+      let html = '<table style="width:100%; border-collapse: collapse; font-size: 12px;">';
+      html += '<tr style="background:#f1f5f9;"><th style="padding:8px 10px; text-align:left; border-bottom:2px solid #e2e8f0;">Campo</th><th style="padding:8px 10px; text-align:left; border-bottom:2px solid #e2e8f0;">Descrição</th></tr>';
+
+      unique.forEach((tooltip, name) => {
+        html += `<tr style="border-bottom:1px solid #f1f5f9;">
+          <td style="padding:6px 10px; font-family: monospace; font-size: 11px; color: #92400e; background: #fffbeb; border-radius: 4px;">${name}</td>
+          <td style="padding:6px 10px; color: #64748b;">${tooltip}</td>
+        </tr>`;
+      });
+
+      html += '</table>';
+      document.getElementById('fieldsList').innerHTML = html;
+      openModal('fieldsModal');
+    }
+
+    function copyFieldsList() {
+      const phs = document.querySelectorAll('.placeholder');
+      const unique = new Map();
+      phs.forEach(ph => {
+        const name = ph.textContent.trim();
+        const tooltip = ph.dataset.tooltip || '';
+        if (!unique.has(name)) unique.set(name, tooltip);
+      });
+
+      let text = 'CAMPOS VARIÁVEIS — MODELO DE CONTRATO\n\n';
+      unique.forEach((tooltip, name) => {
+        text += `${name}  →  ${tooltip}\n`;
+      });
+
+      navigator.clipboard.writeText(text).then(() => {
+        toast('&#128203;', 'Lista copiada!');
+      });
+    }
+
+    // ─── MODAL HELPERS ───
+    function openModal(id) {
+      document.getElementById(id).classList.add('show');
+    }
+
+    function closeModal(id) {
+      document.getElementById(id).classList.remove('show');
+    }
+
+    // Close modals on overlay click
+    document.addEventListener('click', (e) => {
+      if (e.target.classList.contains('modal-overlay')) {
+        e.target.classList.remove('show');
+      }
+    });
+
+    // ─── KEYBOARD SHORTCUTS ───
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        document.querySelectorAll('.modal-overlay.show').forEach(m => m.classList.remove('show'));
+        if (document.body.classList.contains('fullscreen')) document.body.classList.remove('fullscreen');
+      }
+      if (e.ctrlKey && e.key === 'p') {
+        e.preventDefault();
+        downloadPDF();
+      }
+      if (e.ctrlKey && e.key === '=') {
+        e.preventDefault();
+        zoomIn();
+      }
+      if (e.ctrlKey && e.key === '-') {
+        e.preventDefault();
+        zoomOut();
+      }
+    });
+
+    // ─── TOAST ───
+    function toast(icon, message) {
+      const t = document.getElementById('toast');
+      document.getElementById('toastIcon').innerHTML = icon;
+      document.getElementById('toastMsg').textContent = message;
+      t.classList.add('show');
+      clearTimeout(t._timeout);
+      t._timeout = setTimeout(() => t.classList.remove('show'), 3000);
+    }
+  </script>
+
+</body>
+</html>

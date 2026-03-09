@@ -1,8 +1,9 @@
 'use client';
 
 import React, { useEffect, useMemo, useState } from 'react';
+import Link from 'next/link';
 import { Card } from '../../../components/ui/Card/Card';
-import { FileText, Download, FilePlus, Search } from 'lucide-react';
+import { FileText, Download, FilePlus, Search, Eye } from 'lucide-react';
 import { apiGet, apiPost, apiPut, downloadWithAuth } from '../../../lib/api';
 import type { DocumentItem, DocumentTemplate, Tenant } from '../../../lib/types';
 import styles from './page.module.css';
@@ -299,6 +300,20 @@ export default function DocumentsPage() {
         </div>
 
         <div className={styles.sideSection}>
+          <Card className={styles.generatorCard}>
+            <h3 className={styles.generatorTitle}>Contrato de Locação</h3>
+            <p className={styles.generatorDesc}>Modelo padrão de contrato residencial com todas as cláusulas e formatação profissional.</p>
+            <Link href="/documents/contract" style={{
+              display: 'inline-flex', alignItems: 'center', gap: 8,
+              padding: '10px 16px', background: 'var(--primary)', color: 'white',
+              borderRadius: 'var(--radius-md)', fontWeight: 600, fontSize: '0.875rem',
+              textDecoration: 'none', transition: 'all 150ms', width: '100%', justifyContent: 'center',
+            }}>
+              <Eye size={16} />
+              Visualizar Modelo de Contrato
+            </Link>
+          </Card>
+
           <Card className={styles.generatorCard}>
             <h3 className={styles.generatorTitle}>Quick Generator</h3>
             <p className={styles.generatorDesc}>Generate a populated PDF from a selected template and tenant profile.</p>

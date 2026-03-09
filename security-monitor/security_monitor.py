@@ -498,6 +498,185 @@ class AuditdCollector:
         return events
 
 
+class DependencyAuditCollector:
+    """Audits npm dependencies for security vulnerabilities and outdated packages."""
+
+    PROJECTS = {
+        "coldnb": "/opt/coldnb/coldnb main/coldnb nextjs",
+        "realstate": "/opt/realstate/frontend",
+    }
+
+    def __init__(self):
+        self.last_audit = 0
+        self.audit_interval = 86400  # once per day
+
+    def collect(self):
+        """Run dependency audit if enough time has passed."""
+        now = time.time()
+        if now - self.last_audit < self.audit_interval:
+            return []
+        self.last_audit = now
+        return self._run_full_audit()
+
+    def _run_full_audit(self):
+        """Run npm audit and npm outdated on all projects."""
+        events = []
+        results = {}
+
+        for name, path in self.PROJECTS.items():
+            if not os.path.isdir(path):
+                continue
+
+            audit_result = self._npm_audit(name, path)
+            outdated_result = self._npm_outdated(name, path)
+            results[name] = {
+                "audit": audit_result,
+                "outdated": outdated_result,
+                "checked_at": datetime.utcnow().isoformat(),
+            }
+
+            # Store events for vulnerabilities
+            if audit_result.get("vulnerabilities_total", 0) > 0:
+                severity = "CRITICAL" if audit_result.get("critical", 0) > 0 or audit_result.get("high", 0) > 0 else "WARNING"
+                store_event(
+                    "dependency_vulnerability", severity,
+                    f"npm audit found {audit_result['vulnerabilities_total']} vulnerabilities in {name}",
+                    source="dependency_audit",
+                    details=json.dumps(audit_result),
+                )
+                events.append({"project": name, "vulns": audit_result["vulnerabilities_total"]})
+
+            # Store events for outdated packages
+            if outdated_result.get("outdated_count", 0) > 0:
+                store_event(
+                    "dependency_outdated", "INFO",
+                    f"{outdated_result['outdated_count']} outdated packages in {name}",
+                    source="dependency_audit",
+                    details=json.dumps(outdated_result),
+                )
+
+        # Store full results in DB
+        self._store_audit_results(results)
+        return events
+
+    def _npm_audit(self, project_name, path):
+        """Run npm audit and parse results."""
+        try:
+            result = subprocess.run(
+                ["npm", "audit", "--json"],
+                capture_output=True, text=True, timeout=60, cwd=path,
+            )
+            data = json.loads(result.stdout) if result.stdout.strip() else {}
+            vulns = data.get("vulnerabilities", {})
+            summary = {"critical": 0, "high": 0, "moderate": 0, "low": 0, "info": 0, "vulnerabilities_total": 0}
+
+            if isinstance(vulns, dict):
+                for pkg_name, vuln_info in vulns.items():
+                    sev = vuln_info.get("severity", "info").lower()
+                    if sev in summary:
+                        summary[sev] += 1
+                    summary["vulnerabilities_total"] += 1
+
+            # Also check metadata summary if available
+            metadata = data.get("metadata", {})
+            if metadata:
+                vuln_meta = metadata.get("vulnerabilities", {})
+                if vuln_meta:
+                    for sev in ["critical", "high", "moderate", "low", "info"]:
+                        summary[sev] = max(summary[sev], vuln_meta.get(sev, 0))
+                    summary["vulnerabilities_total"] = sum(vuln_meta.get(s, 0) for s in ["critical", "high", "moderate", "low"])
+
+            return summary
+        except Exception as e:
+            log.error("npm audit failed for %s: %s", project_name, e)
+            return {"error": str(e), "vulnerabilities_total": 0}
+
+    def _npm_outdated(self, project_name, path):
+        """Run npm outdated and parse results."""
+        try:
+            result = subprocess.run(
+                ["npm", "outdated", "--json"],
+                capture_output=True, text=True, timeout=60, cwd=path,
+            )
+            data = json.loads(result.stdout) if result.stdout.strip() else {}
+            packages = []
+            for pkg_name, info in data.items():
+                packages.append({
+                    "name": pkg_name,
+                    "current": info.get("current", ""),
+                    "wanted": info.get("wanted", ""),
+                    "latest": info.get("latest", ""),
+                    "type": info.get("type", ""),
+                })
+            return {"outdated_count": len(packages), "packages": packages[:50]}
+        except Exception as e:
+            log.error("npm outdated failed for %s: %s", project_name, e)
+            return {"error": str(e), "outdated_count": 0}
+
+    def _store_audit_results(self, results):
+        """Store audit results in the database."""
+        try:
+            conn = get_db()
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS dependency_audits (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    timestamp TEXT NOT NULL DEFAULT (datetime('now')),
+                    project TEXT NOT NULL,
+                    audit_json TEXT NOT NULL,
+                    outdated_json TEXT NOT NULL,
+                    vulnerabilities_total INTEGER DEFAULT 0,
+                    outdated_count INTEGER DEFAULT 0
+                )
+            """)
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_dep_audit_ts ON dependency_audits(timestamp)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_dep_audit_proj ON dependency_audits(project)")
+
+            for project, data in results.items():
+                conn.execute(
+                    "INSERT INTO dependency_audits (project, audit_json, outdated_json, vulnerabilities_total, outdated_count) VALUES (?,?,?,?,?)",
+                    (project, json.dumps(data["audit"]), json.dumps(data["outdated"]),
+                     data["audit"].get("vulnerabilities_total", 0),
+                     data["outdated"].get("outdated_count", 0)),
+                )
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            log.error("Failed to store audit results: %s", e)
+
+    def get_latest_results(self):
+        """Get latest audit results for API."""
+        try:
+            conn = get_db()
+            rows = conn.execute("""
+                SELECT * FROM dependency_audits
+                WHERE id IN (SELECT MAX(id) FROM dependency_audits GROUP BY project)
+                ORDER BY project
+            """).fetchall()
+            conn.close()
+            return [dict(r) for r in rows]
+        except Exception:
+            return []
+
+    def get_audit_history(self, project=None, limit=30):
+        """Get audit history for API."""
+        try:
+            conn = get_db()
+            if project:
+                rows = conn.execute(
+                    "SELECT * FROM dependency_audits WHERE project=? ORDER BY timestamp DESC LIMIT ?",
+                    (project, limit),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT * FROM dependency_audits ORDER BY timestamp DESC LIMIT ?",
+                    (limit,),
+                ).fetchall()
+            conn.close()
+            return [dict(r) for r in rows]
+        except Exception:
+            return []
+
+
 class PortCollector:
     """Monitors listening ports for unexpected changes."""
 
@@ -601,6 +780,12 @@ class MonitorAPIHandler(BaseHTTPRequestHandler):
                 self._handle_action_log()
             elif path == "/api/monitor/events/csv":
                 self._handle_events_csv(params)
+            elif path == "/api/monitor/deps":
+                self._handle_dependency_audit()
+            elif path == "/api/monitor/deps/history":
+                self._handle_dependency_history(params)
+            elif path == "/api/monitor/deps/run":
+                self._handle_run_audit()
             else:
                 self._send_error(404, "not_found")
         except Exception as e:
@@ -820,6 +1005,25 @@ class MonitorAPIHandler(BaseHTTPRequestHandler):
         self._send_json([dict(r) for r in rows])
 
 
+    def _handle_dependency_audit(self):
+        """Return latest dependency audit results."""
+        results = dep_audit_collector.get_latest_results()
+        self._send_json(results)
+
+    def _handle_dependency_history(self, params):
+        """Return dependency audit history."""
+        project = params.get("project", [None])[0]
+        limit = int(params.get("limit", ["30"])[0])
+        results = dep_audit_collector.get_audit_history(project, limit)
+        self._send_json(results)
+
+    def _handle_run_audit(self):
+        """Trigger an immediate dependency audit."""
+        dep_audit_collector.last_audit = 0  # Reset timer to force run
+        events = dep_audit_collector.collect()
+        results = dep_audit_collector.get_latest_results()
+        self._send_json({"triggered": True, "events": len(events), "results": results})
+
     def _send_csv(self, csv_content, filename="events.csv"):
         data = csv_content.encode("utf-8")
         self.send_response(200)
@@ -960,6 +1164,7 @@ class MonitorAPIHandler(BaseHTTPRequestHandler):
 # ============================================================
 
 START_TIME = time.time()
+dep_audit_collector = DependencyAuditCollector()
 
 
 def collector_loop():
@@ -981,6 +1186,7 @@ def collector_loop():
             crowdsec.collect()
             auditd.collect()
             ports.collect()
+            dep_audit_collector.collect()
         except Exception as e:
             log.error("Collector error: %s", e)
 

@@ -3,6 +3,7 @@ backend/realstate_api
 backend/data/*.db
 backend/generated/*.pdf
 backend/generated/*.csv
+backend/uploads/
 
 # Frontend
 frontend/node_modules
@@ -13,3 +14,7 @@ frontend/out
 *.log
 .DS_Store
 .env.local
+/data/
+/dumps/
+/generated/
+/tmp/

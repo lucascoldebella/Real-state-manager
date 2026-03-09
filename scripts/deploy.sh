@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Oliveira Costa Real Estate — One-Command Deploy Script
 # Pushes local changes to GitHub, pulls on VPS, rebuilds what changed, restarts services.
 #
@@ -9,13 +9,28 @@
 #   ./scripts/deploy.sh --full       # Force full rebuild (frontend + backend)
 #   ./scripts/deploy.sh --skip-push  # Deploy without pushing (VPS pulls latest from GitHub)
 
-set -e
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 VPS="coldnb-vps"
-VPS_PUBLIC_IP="${VPS_PUBLIC_IP:-64.225.9.178}"
+VPS_PUBLIC_IP="${VPS_PUBLIC_IP:-134.209.44.188}"
+VPS_DOMAIN="${VPS_DOMAIN:-oc.coldnb.com}"
 VPS_PROJECT="/opt/realstate"
 VPS_FRONTEND="$VPS_PROJECT/frontend"
 VPS_BACKEND="$VPS_PROJECT/backend"
+BACKEND_SERVICE="realstate-backend"
+FRONTEND_PROCESS="realstate-frontend"
+
+LOCAL_ONLY_PATHS=(
+    "backend/.env"
+    "frontend/.env.local"
+    "backend/data"
+    "backend/generated"
+    "data"
+    "dumps"
+    "generated"
+)
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -27,6 +42,18 @@ info()  { echo -e "${CYAN}[deploy]${NC} $1"; }
 ok()    { echo -e "${GREEN}[deploy]${NC} $1"; }
 warn()  { echo -e "${YELLOW}[deploy]${NC} $1"; }
 fail()  { echo -e "${RED}[deploy]${NC} $1"; exit 1; }
+
+is_local_only_path() {
+    local path="$1"
+    case "$path" in
+        backend/.env|frontend/.env.local|backend/data/*|backend/generated/*|data/*|dumps/*|generated/*)
+            return 0
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
 
 # Parse flags
 FORCE_FRONTEND=false
@@ -52,19 +79,54 @@ echo "  Real Estate Deploy to Production"
 echo "========================================"
 echo ""
 
-# Step 1: Check for uncommitted changes
+# Step 1: Commit local changes if any
 info "Checking local git status..."
-cd "$(dirname "$0")/.."
+cd "$ROOT_DIR"
 
 if [ -n "$(git status --porcelain)" ]; then
-    warn "You have uncommitted changes:"
+    warn "Uncommitted changes:"
     git status --short
     echo ""
-    read -p "Continue deploying only committed changes? (y/N) " -n 1 -r
-    echo ""
-    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-        fail "Aborted. Commit your changes first."
+
+    info "Auto-staging code changes while leaving local DB/config files untouched..."
+    git add -u -- . ":(exclude)backend/.env" ":(exclude)frontend/.env.local" ":(exclude)backend/data" ":(exclude)backend/generated"
+
+    SAFE_UNTRACKED=()
+    while IFS= read -r path; do
+        [ -z "$path" ] && continue
+        if ! is_local_only_path "$path"; then
+            SAFE_UNTRACKED+=("$path")
+        fi
+    done < <(git ls-files --others --exclude-standard)
+
+    if [ "${#SAFE_UNTRACKED[@]}" -gt 0 ]; then
+        git add -- "${SAFE_UNTRACKED[@]}"
     fi
+
+    if ! git diff --cached --quiet; then
+        echo "Staged changes:"
+        git diff --cached --stat
+        echo ""
+
+        read -r -p "Commit message: " COMMIT_MSG
+        if [ -z "$COMMIT_MSG" ]; then
+            fail "Aborted. No commit message entered."
+        fi
+
+        git commit -m "$COMMIT_MSG"
+        ok "Changes committed"
+    else
+        warn "Only local-only files changed. No code/config changes were auto-committed."
+    fi
+
+    LOCAL_ONLY_STATUS="$(git status --short -- "${LOCAL_ONLY_PATHS[@]}" || true)"
+    if [ -n "$LOCAL_ONLY_STATUS" ]; then
+        warn "Left out of the deploy commit on purpose:"
+        echo "$LOCAL_ONLY_STATUS"
+        echo ""
+    fi
+else
+    info "Working tree clean — pushing latest commit"
 fi
 
 # Step 2: Detect what changed since last deploy tag
@@ -119,14 +181,14 @@ ok "VPS code updated"
 # Step 5: Rebuild backend if needed
 if $NEED_BACKEND; then
     info "Rebuilding C backend..."
-    ssh "$VPS" "cd '$VPS_BACKEND' && make clean && make 2>&1 | tail -3 && systemctl restart realstate-api && echo 'Backend restarted'"
+    ssh "$VPS" "bash -lc \"cd '$VPS_BACKEND' && make clean >/dev/null 2>&1 || true && make && systemctl restart $BACKEND_SERVICE && systemctl is-active --quiet $BACKEND_SERVICE && curl -fsS http://127.0.0.1:8090/health >/dev/null && echo 'Backend restarted'\""
     ok "Backend deployed"
 fi
 
 # Step 6: Rebuild frontend if needed
 if $NEED_FRONTEND; then
     info "Rebuilding Next.js frontend (this takes ~30s)..."
-    ssh "$VPS" "cd '$VPS_FRONTEND' && npm install 2>&1 | tail -2 && NEXT_TELEMETRY_DISABLED=1 npm run build 2>&1 | tail -5 && pm2 restart realstate-frontend && echo 'Frontend restarted'"
+    ssh "$VPS" "bash -lc \"cd '$VPS_FRONTEND' && npm install && NEXT_TELEMETRY_DISABLED=1 npm run build && pm2 restart $FRONTEND_PROCESS && curl -fsS http://127.0.0.1:5173/ >/dev/null && echo 'Frontend restarted'\""
     ok "Frontend deployed"
 fi
 
@@ -137,8 +199,8 @@ git tag "$DEPLOY_TAG" 2>/dev/null || true
 # Step 8: Quick health check
 info "Health check..."
 sleep 3
-HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 "http://$VPS_PUBLIC_IP:8081/" 2>/dev/null || echo "000")
-API_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 "http://$VPS_PUBLIC_IP:8081/health" 2>/dev/null || echo "000")
+HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 "https://$VPS_DOMAIN/" 2>/dev/null || echo "000")
+API_CODE=$(ssh "$VPS" "curl -s -o /dev/null -w '%{http_code}' --max-time 10 http://127.0.0.1:8090/health" 2>/dev/null || echo "000")
 
 if [ "$HTTP_CODE" = "200" ] || [ "$HTTP_CODE" = "307" ]; then
     ok "Health check passed: Frontend=$HTTP_CODE API=$API_CODE"
