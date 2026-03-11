@@ -1,8 +1,11 @@
 .layout {
   display: flex;
   min-height: 100vh;
+  width: 100%;
+  min-width: 0;
   background-color: var(--bg-main);
   position: relative;
+  overflow-x: clip;
 }
 
 .loadingState {
@@ -24,15 +27,20 @@
   display: flex;
   flex-direction: column;
   min-height: 100vh;
+  min-width: 0;
   transition: margin-left var(--transition-smooth);
 }
 
 .content {
   padding: 32px 40px;
   flex: 1;
-  max-width: 1600px;
+  width: min(100%, 1600px);
   margin: 0 auto;
-  width: 100%;
+  min-width: 0;
+}
+
+.content > * {
+  min-width: 0;
 }
 
 .overlay {
@@ -55,7 +63,7 @@
   }
   
   .content {
-    padding: 24px 20px;
+    padding: 24px 16px 32px;
   }
 
   .sidebarWrapper {

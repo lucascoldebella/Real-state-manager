@@ -67,6 +67,10 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) =>
     }
   }, [fallbackPath, hasAccess, isAuthenticated, loading, requiredModule, router]);
 
+  React.useEffect(() => {
+    setIsSidebarOpen(false);
+  }, [pathname]);
+
   if (loading || !isAuthenticated) {
     return <div className={styles.loadingState}>Checking session...</div>;
   }

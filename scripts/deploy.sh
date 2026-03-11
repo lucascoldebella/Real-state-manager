@@ -91,6 +91,10 @@ if [ -n "$(git status --porcelain)" ]; then
     info "Auto-staging code changes while leaving local DB/config files untouched..."
     git add -u -- . ":(exclude)backend/.env" ":(exclude)frontend/.env.local" ":(exclude)backend/data" ":(exclude)backend/generated"
 
+    for path in "${LOCAL_ONLY_PATHS[@]}"; do
+        git restore --staged -- "$path" 2>/dev/null || true
+    done
+
     SAFE_UNTRACKED=()
     while IFS= read -r path; do
         [ -z "$path" ] && continue
