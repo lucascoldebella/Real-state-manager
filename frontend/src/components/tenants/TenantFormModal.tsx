@@ -51,7 +51,7 @@ interface TenantFormModalProps {
   initialTenant?: Tenant | null;
   prefillData?: TenantPrefillData | null;
   onClose: () => void;
-  onSaved: () => void;
+  onSaved: (newTenantId?: number) => void;
 }
 
 const EMPTY_FORM: TenantFormValues = {
@@ -373,13 +373,15 @@ export const TenantFormModal: React.FC<TenantFormModalProps> = ({
 
     setSaving(true);
     try {
+      let newTenantId: number | undefined;
       if (mode === 'create') {
-        await apiPost('/api/tenants', payload);
+        const res = await apiPost<{ id: number }>('/api/tenants', payload);
+        newTenantId = res.id;
       } else if (initialTenant) {
         await apiPut(`/api/tenants/${initialTenant.id}`, payload);
       }
       window.dispatchEvent(new CustomEvent('oc:data-refresh'));
-      onSaved();
+      onSaved(newTenantId);
       onClose();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unable to save tenant.');

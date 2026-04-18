@@ -1,27 +1,12 @@
 'use client';
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { Card } from '../../../components/ui/Card/Card';
-import { FileText, Download, FilePlus, Search, Eye } from 'lucide-react';
-import { apiGet, apiPost, apiPut, downloadWithAuth } from '../../../lib/api';
+import { FileText, Receipt, MessageSquare, FolderOpen, ArrowRight, ScrollText, Clock } from 'lucide-react';
+import { apiGet, apiPut, apiPost } from '../../../lib/api';
+import { Modal } from '../../../components/ui/Modal/Modal';
 import type { DocumentItem, DocumentTemplate, Tenant } from '../../../lib/types';
 import styles from './page.module.css';
-
-type DocFilter = 'all' | 'rental_contract' | 'payment_receipt' | 'other';
-
-const DOC_FILTER_LABEL: Record<DocFilter, string> = {
-  all: 'All templates',
-  rental_contract: 'Contracts',
-  payment_receipt: 'Receipts',
-  other: 'Other',
-};
-
-const filterType = (type: string): DocFilter => {
-  if (type === 'rental_contract') return 'rental_contract';
-  if (type === 'payment_receipt') return 'payment_receipt';
-  return 'other';
-};
 
 interface CollectionDrafts {
   due_note: string;
@@ -29,29 +14,18 @@ interface CollectionDrafts {
   eviction_notice: string;
 }
 
-const EMPTY_DRAFTS: CollectionDrafts = {
-  due_note: '',
-  overdue_note: '',
-  eviction_notice: '',
-};
-
 export default function DocumentsPage() {
   const [templates, setTemplates] = useState<DocumentTemplate[]>([]);
   const [documents, setDocuments] = useState<DocumentItem[]>([]);
   const [tenants, setTenants] = useState<Tenant[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
-  const [query, setQuery] = useState('');
-  const [filter, setFilter] = useState<DocFilter>('all');
-  const [templateId, setTemplateId] = useState('');
-  const [tenantId, setTenantId] = useState('');
-  const [generating, setGenerating] = useState(false);
-  const [drafts, setDrafts] = useState<CollectionDrafts>(EMPTY_DRAFTS);
+  const [showCollectionModal, setShowCollectionModal] = useState(false);
+  const [drafts, setDrafts] = useState<CollectionDrafts>({ due_note: '', overdue_note: '', eviction_notice: '' });
   const [savingDrafts, setSavingDrafts] = useState(false);
+  const [saveSuccess, setSaveSuccess] = useState(false);
 
   const load = React.useCallback(async () => {
     setLoading(true);
-    setError('');
     try {
       const [templatesRes, docsRes, tenantsRes] = await Promise.all([
         apiGet<{ items: DocumentTemplate[] }>('/api/document-templates'),
@@ -60,9 +34,9 @@ export default function DocumentsPage() {
       ]);
       setTemplates(templatesRes.items || []);
       setDocuments(docsRes.items || []);
-      setTenants((tenantsRes.items || []).filter((tenant) => tenant.active));
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load documents module.');
+      setTenants((tenantsRes.items || []).filter((t) => t.active));
+    } catch {
+      // silent load
     } finally {
       setLoading(false);
     }
@@ -70,102 +44,41 @@ export default function DocumentsPage() {
 
   useEffect(() => {
     void load();
-    const onRefresh = () => void load();
-    window.addEventListener('oc:data-refresh', onRefresh);
-    return () => window.removeEventListener('oc:data-refresh', onRefresh);
   }, [load]);
 
   useEffect(() => {
-    if (!templateId && templates.length > 0) {
-      setTemplateId(String(templates[0].id));
-    }
-    if (!tenantId && tenants.length > 0) {
-      setTenantId(String(tenants[0].id));
-    }
-  }, [templateId, tenantId, templates, tenants]);
-
-  useEffect(() => {
-    const pickBody = (type: keyof CollectionDrafts, fallback: string) =>
-      templates.find((template) => template.document_type === type)?.template_body || fallback;
+    const pickBody = (type: string, fallback: string) =>
+      templates.find((t) => t.document_type === type)?.template_body || fallback;
     setDrafts({
-      due_note: pickBody(
-        'due_note',
-        'Hello {{tenant_name}}, this is a reminder that rent for unit {{unit_number}} is due on {{due_date}}. Amount: {{rent_value}}.',
-      ),
-      overdue_note: pickBody(
-        'overdue_note',
-        'Hello {{tenant_name}}, rent for unit {{unit_number}} is overdue since {{due_date}}. Outstanding amount: {{rent_value}}.',
-      ),
+      due_note: pickBody('due_note', 'Hello {{tenant_name}}, this is a reminder that rent for unit {{unit_number}} is due on {{due_date}}. Amount: {{rent_value}}.'),
+      overdue_note: pickBody('overdue_note', 'Hello {{tenant_name}}, rent for unit {{unit_number}} is overdue since {{due_date}}. Outstanding amount: {{rent_value}}.'),
       eviction_notice: pickBody('eviction_notice', '{{tenant_name}} - Unit {{unit_number}}'),
     });
   }, [templates]);
 
-  const filteredTemplates = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    return templates.filter((template) => {
-      const matchesType = filter === 'all' || filterType(template.document_type) === filter;
-      if (!matchesType) return false;
-      if (!q) return true;
-      return `${template.name} ${template.document_type}`.toLowerCase().includes(q);
-    });
-  }, [filter, query, templates]);
+  const contractCount = documents.filter((d) => d.document_type === 'rental_contract').length;
+  const invoiceCount = documents.filter((d) => d.document_type === 'payment_receipt' || d.document_type === 'invoice').length;
+  const activeTenants = tenants.length;
+  const expiringContracts = tenants.filter((t) => {
+    if (!t.contract_end) return false;
+    const end = new Date(t.contract_end);
+    const now = new Date();
+    const diff = (end.getTime() - now.getTime()) / (1000 * 60 * 60 * 24);
+    return diff >= 0 && diff <= 30;
+  }).length;
 
-  const filteredDocuments = useMemo(() => {
-    if (filter === 'all') return documents;
-    return documents.filter((doc) => filterType(doc.document_type) === filter);
-  }, [documents, filter]);
-
-  const generateDocument = async () => {
-    if (!templateId || !tenantId) {
-      setError('Select a template and tenant before generating.');
-      return;
-    }
-
-    setGenerating(true);
-    setError('');
-    try {
-      const payload = {
-        template_id: Number(templateId),
-        tenant_id: Number(tenantId),
-      };
-      await apiPost('/api/documents/generate', payload);
-      window.dispatchEvent(new CustomEvent('oc:data-refresh'));
-      await load();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Document generation failed.');
-    } finally {
-      setGenerating(false);
-    }
-  };
-
-  const downloadDocument = async (doc: DocumentItem) => {
-    try {
-      await downloadWithAuth(doc.download_url, `document-${doc.id}.pdf`);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Download failed.');
-    }
-  };
-
-  const upsertTemplate = async (docType: keyof CollectionDrafts, name: string, templateBody: string): Promise<void> => {
-    const existing = templates.find((template) => template.document_type === docType);
+  const upsertTemplate = async (docType: string, name: string, templateBody: string) => {
+    const existing = templates.find((t) => t.document_type === docType);
     if (existing) {
-      await apiPut(`/api/document-templates/${existing.id}`, {
-        name: existing.name || name,
-        document_type: docType,
-        template_body: templateBody,
-      });
-      return;
+      await apiPut(`/api/document-templates/${existing.id}`, { name: existing.name || name, document_type: docType, template_body: templateBody });
+    } else {
+      await apiPost('/api/document-templates', { name, document_type: docType, template_body: templateBody });
     }
-    await apiPost('/api/document-templates', {
-      name,
-      document_type: docType,
-      template_body: templateBody,
-    });
   };
 
   const saveCollectionDrafts = async () => {
     setSavingDrafts(true);
-    setError('');
+    setSaveSuccess(false);
     try {
       await Promise.all([
         upsertTemplate('due_note', 'Due Date Reminder', drafts.due_note.trim()),
@@ -173,8 +86,10 @@ export default function DocumentsPage() {
         upsertTemplate('eviction_notice', 'Eviction Notice Template', drafts.eviction_notice.trim()),
       ]);
       await load();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unable to save collection templates.');
+      setSaveSuccess(true);
+      setTimeout(() => setSaveSuccess(false), 2000);
+    } catch {
+      // silent
     } finally {
       setSavingDrafts(false);
     }
@@ -183,212 +98,149 @@ export default function DocumentsPage() {
   return (
     <div className={styles.container}>
       <header className={styles.header}>
-        <div className={styles.headerTitle}>
-          <h2>Document Center</h2>
-          <p>Separated by category: contracts, receipts, and other templates with generated history.</p>
-        </div>
-        <div className={styles.headerActions}>
-          <div className={styles.searchContainer}>
-            <Search size={18} className={styles.searchIcon} />
-            <input
-              type="text"
-              placeholder="Search templates..."
-              className={styles.searchInput}
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-            />
+        <div className={styles.headerContent}>
+          <div className={styles.headerIcon}>
+            <FolderOpen size={28} />
           </div>
-          <button className={styles.generateBtn} onClick={() => void generateDocument()} disabled={generating}>
-            <FilePlus size={18} />
-            {generating ? 'Generating...' : 'Generate Document'}
-          </button>
+          <div>
+            <h2 className={styles.headerTitle}>Central de Documentos</h2>
+            <p className={styles.headerDesc}>Gerencie contratos, recibos e modelos de cobrança do seu imóvel.</p>
+          </div>
+        </div>
+        <div className={styles.headerStats}>
+          <div className={styles.statPill}>
+            <ScrollText size={14} />
+            <span>{activeTenants} inquilinos ativos</span>
+          </div>
+          {expiringContracts > 0 && (
+            <div className={`${styles.statPill} ${styles.statPillWarning}`}>
+              <Clock size={14} />
+              <span>{expiringContracts} contrato{expiringContracts > 1 ? 's' : ''} vencendo</span>
+            </div>
+          )}
         </div>
       </header>
 
-      {error && <div className={styles.error}>{error}</div>}
-
-      <div className={styles.segmented}>
-        {(['all', 'rental_contract', 'payment_receipt', 'other'] as DocFilter[]).map((docFilter) => (
-          <button
-            key={docFilter}
-            className={`${styles.segmentBtn} ${filter === docFilter ? styles.segmentBtnActive : ''}`}
-            onClick={() => setFilter(docFilter)}
-          >
-            {DOC_FILTER_LABEL[docFilter]}
-          </button>
-        ))}
-      </div>
-
-      <div className={styles.contentGrid}>
-        <div className={styles.mainSection}>
-          <Card className={styles.tableCard}>
-            <div className={styles.tableHeader}>
-              <h3 className={styles.tableTitle}>Templates</h3>
+      <div className={styles.blocksGrid}>
+        {/* CONTRACTS BLOCK */}
+        <Link href="/documents/contract" className={styles.block}>
+          <div className={styles.blockIconWrap}>
+            <div className={`${styles.blockIcon} ${styles.blockIconContracts}`}>
+              <FileText size={32} />
             </div>
-            <div className={styles.tableWrapper}>
-              <table className={styles.table}>
-                <thead>
-                  <tr>
-                    <th>Document Name</th>
-                    <th>Category</th>
-                    <th>Created</th>
-                    <th></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {filteredTemplates.map((template) => (
-                    <tr key={template.id}>
-                      <td>
-                        <div className={styles.docInfo}>
-                          <div className={styles.docIcon}>
-                            <FileText size={18} />
-                          </div>
-                          <span className={styles.docTitle}>{template.name}</span>
-                        </div>
-                      </td>
-                      <td>
-                        <span className={styles.docType}>{template.document_type}</span>
-                      </td>
-                      <td className={styles.docUpdated}>{template.created_at}</td>
-                      <td className={styles.actionsCell}>
-                        <button className={styles.downloadBtn} onClick={() => setTemplateId(String(template.id))}>
-                          Select
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-              {!loading && filteredTemplates.length === 0 && <div className={styles.empty}>No templates found for this filter.</div>}
-            </div>
-          </Card>
-
-          <Card className={styles.tableCard}>
-            <div className={styles.tableHeader}>
-              <h3 className={styles.tableTitle}>Generated Documents</h3>
-            </div>
-            <div className={styles.tableWrapper}>
-              <table className={styles.table}>
-                <thead>
-                  <tr>
-                    <th>Type</th>
-                    <th>Tenant</th>
-                    <th>Generated At</th>
-                    <th></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {filteredDocuments.map((doc) => (
-                    <tr key={doc.id}>
-                      <td>
-                        <span className={styles.docType}>{doc.document_type}</span>
-                      </td>
-                      <td>{doc.tenant_name}</td>
-                      <td className={styles.docUpdated}>{doc.generated_at}</td>
-                      <td className={styles.actionsCell}>
-                        <button className={styles.downloadBtn} onClick={() => void downloadDocument(doc)}>
-                          <Download size={16} /> Download
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-              {!loading && filteredDocuments.length === 0 && <div className={styles.empty}>No generated documents in this category.</div>}
-            </div>
-          </Card>
-        </div>
-
-        <div className={styles.sideSection}>
-          <Card className={styles.generatorCard}>
-            <h3 className={styles.generatorTitle}>Contrato de Locação</h3>
-            <p className={styles.generatorDesc}>Modelo padrão de contrato residencial com todas as cláusulas e formatação profissional.</p>
-            <Link href="/documents/contract" style={{
-              display: 'inline-flex', alignItems: 'center', gap: 8,
-              padding: '10px 16px', background: 'var(--primary)', color: 'white',
-              borderRadius: 'var(--radius-md)', fontWeight: 600, fontSize: '0.875rem',
-              textDecoration: 'none', transition: 'all 150ms', width: '100%', justifyContent: 'center',
-            }}>
-              <Eye size={16} />
-              Visualizar Modelo de Contrato
-            </Link>
-          </Card>
-
-          <Card className={styles.generatorCard}>
-            <h3 className={styles.generatorTitle}>Quick Generator</h3>
-            <p className={styles.generatorDesc}>Generate a populated PDF from a selected template and tenant profile.</p>
-
-            <div className={styles.formGroup}>
-              <label>Select Template</label>
-              <select className={styles.select} value={templateId} onChange={(e) => setTemplateId(e.target.value)}>
-                {templates.map((template) => (
-                  <option key={template.id} value={String(template.id)}>
-                    {template.name} ({template.document_type})
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div className={styles.formGroup}>
-              <label>Tenant / Unit</label>
-              <select className={styles.select} value={tenantId} onChange={(e) => setTenantId(e.target.value)}>
-                {tenants.map((tenant) => (
-                  <option key={tenant.id} value={String(tenant.id)}>
-                    {tenant.full_name} {tenant.unit_number ? `- Unit ${tenant.unit_number}` : ''}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <button className={styles.generateActionBtn} onClick={() => void generateDocument()} disabled={generating}>
-              {generating ? 'Generating...' : 'Generate PDF'}
-            </button>
-          </Card>
-
-          <Card className={styles.generatorCard}>
-            <h3 className={styles.generatorTitle}>Collection Message Templates</h3>
-            <p className={styles.generatorDesc}>
-              Editable text used by Property Control Center clipboard actions and eviction PDF generation.
+          </div>
+          <div className={styles.blockBody}>
+            <h3 className={styles.blockTitle}>Contratos de Locação</h3>
+            <p className={styles.blockDesc}>
+              Modelo padrão de contrato residencial com cláusulas completas. Gere contratos preenchidos para cada inquilino.
             </p>
-
-            <div className={styles.formGroup}>
-              <label>Due Date Note</label>
-              <textarea
-                className={styles.templateArea}
-                value={drafts.due_note}
-                onChange={(e) => setDrafts((prev) => ({ ...prev, due_note: e.target.value }))}
-              />
+            <div className={styles.blockMeta}>
+              <span className={styles.blockCount}>{loading ? '...' : `${contractCount} gerado${contractCount !== 1 ? 's' : ''}`}</span>
+              <span className={styles.blockDot} />
+              <span className={styles.blockCount}>{loading ? '...' : `${activeTenants} inquilino${activeTenants !== 1 ? 's' : ''}`}</span>
             </div>
+          </div>
+          <div className={styles.blockAction}>
+            <span>Abrir</span>
+            <ArrowRight size={16} />
+          </div>
+        </Link>
 
-            <div className={styles.formGroup}>
-              <label>Overdue Notification</label>
-              <textarea
-                className={styles.templateArea}
-                value={drafts.overdue_note}
-                onChange={(e) => setDrafts((prev) => ({ ...prev, overdue_note: e.target.value }))}
-              />
+        {/* INVOICES BLOCK */}
+        <Link href="/documents/invoices" className={styles.block}>
+          <div className={styles.blockIconWrap}>
+            <div className={`${styles.blockIcon} ${styles.blockIconInvoices}`}>
+              <Receipt size={32} />
             </div>
-
-            <div className={styles.formGroup}>
-              <label>Eviction Notice Template</label>
-              <textarea
-                className={styles.templateArea}
-                value={drafts.eviction_notice}
-                onChange={(e) => setDrafts((prev) => ({ ...prev, eviction_notice: e.target.value }))}
-              />
+          </div>
+          <div className={styles.blockBody}>
+            <h3 className={styles.blockTitle}>Recibos de Pagamento</h3>
+            <p className={styles.blockDesc}>
+              Gere recibos profissionais baseados nos pagamentos registrados. Visualize e baixe em PDF.
+            </p>
+            <div className={styles.blockMeta}>
+              <span className={styles.blockCount}>{loading ? '...' : `${invoiceCount} gerado${invoiceCount !== 1 ? 's' : ''}`}</span>
             </div>
+          </div>
+          <div className={styles.blockAction}>
+            <span>Abrir</span>
+            <ArrowRight size={16} />
+          </div>
+        </Link>
 
-            <div className={styles.placeholderHint}>
-              Available placeholders: <code>{'{{tenant_name}}'}</code>, <code>{'{{cpf}}'}</code>, <code>{'{{rent_value}}'}</code>,{' '}
-              <code>{'{{due_date}}'}</code>, <code>{'{{unit_number}}'}</code>
+        {/* COLLECTION MESSAGES BLOCK */}
+        <button className={styles.block} onClick={() => setShowCollectionModal(true)}>
+          <div className={styles.blockIconWrap}>
+            <div className={`${styles.blockIcon} ${styles.blockIconMessages}`}>
+              <MessageSquare size={32} />
             </div>
-
-            <button className={styles.generateActionBtn} onClick={() => void saveCollectionDrafts()} disabled={savingDrafts}>
-              {savingDrafts ? 'Saving...' : 'Save message templates'}
-            </button>
-          </Card>
-        </div>
+          </div>
+          <div className={styles.blockBody}>
+            <h3 className={styles.blockTitle}>Modelos de Cobrança</h3>
+            <p className={styles.blockDesc}>
+              Templates editáveis para avisos de vencimento, atrasos e notificações de despejo.
+            </p>
+            <div className={styles.blockMeta}>
+              <span className={styles.blockCount}>3 modelos</span>
+            </div>
+          </div>
+          <div className={styles.blockAction}>
+            <span>Editar</span>
+            <ArrowRight size={16} />
+          </div>
+        </button>
       </div>
+
+      {/* COLLECTION MESSAGES MODAL */}
+      <Modal isOpen={showCollectionModal} onClose={() => setShowCollectionModal(false)} title="Modelos de Cobrança" size="lg">
+        <div className={styles.collectionForm}>
+          <p className={styles.collectionDesc}>
+            Textos editáveis usados para geração de documentos de cobrança e avisos aos inquilinos.
+          </p>
+
+          <div className={styles.formGroup}>
+            <label className={styles.formLabel}>Aviso de Vencimento</label>
+            <textarea
+              className={styles.textarea}
+              value={drafts.due_note}
+              onChange={(e) => setDrafts((p) => ({ ...p, due_note: e.target.value }))}
+              rows={4}
+            />
+          </div>
+
+          <div className={styles.formGroup}>
+            <label className={styles.formLabel}>Notificação de Atraso</label>
+            <textarea
+              className={styles.textarea}
+              value={drafts.overdue_note}
+              onChange={(e) => setDrafts((p) => ({ ...p, overdue_note: e.target.value }))}
+              rows={4}
+            />
+          </div>
+
+          <div className={styles.formGroup}>
+            <label className={styles.formLabel}>Modelo de Notificação de Despejo</label>
+            <textarea
+              className={styles.textarea}
+              value={drafts.eviction_notice}
+              onChange={(e) => setDrafts((p) => ({ ...p, eviction_notice: e.target.value }))}
+              rows={4}
+            />
+          </div>
+
+          <div className={styles.placeholderHint}>
+            Placeholders disponíveis: <code>{'{{tenant_name}}'}</code>, <code>{'{{cpf}}'}</code>, <code>{'{{rent_value}}'}</code>, <code>{'{{due_date}}'}</code>, <code>{'{{unit_number}}'}</code>
+          </div>
+
+          <button
+            className={`${styles.saveBtn} ${saveSuccess ? styles.saveBtnSuccess : ''}`}
+            onClick={() => void saveCollectionDrafts()}
+            disabled={savingDrafts}
+          >
+            {savingDrafts ? 'Salvando...' : saveSuccess ? 'Salvo!' : 'Salvar modelos'}
+          </button>
+        </div>
+      </Modal>
     </div>
   );
 }

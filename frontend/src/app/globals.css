@@ -225,3 +225,285 @@ button {
     font-size: 16px !important;
   }
 }
+
+/* ═══════════════════════════════════════════════════════════════
+   DOCUMENT RENDERING STYLES
+   Applied inside .oc-document-body (RichTextEditor preview + viewer)
+   ═══════════════════════════════════════════════════════════════ */
+.oc-document-body {
+  font-family: 'Georgia', 'Times New Roman', serif;
+  font-size: 11.5pt;
+  line-height: 1.8;
+  color: #1a1a1a;
+}
+
+.oc-document-body h1,
+.oc-document-body .doc-title {
+  text-align: center;
+  font-family: 'Georgia', 'Times New Roman', serif;
+  font-size: 15pt;
+  font-weight: 700;
+  letter-spacing: 1.5px;
+  color: #1a365d;
+  margin: 0 0 24px;
+  padding-bottom: 14px;
+  border-bottom: 2px solid #c9a84c;
+}
+
+.oc-document-body h2,
+.oc-document-body .doc-subtitle {
+  text-align: center;
+  font-family: 'Outfit', 'Inter', sans-serif;
+  font-size: 12pt;
+  font-weight: 700;
+  color: #1a365d;
+  margin: 24px 0 14px;
+  letter-spacing: 0.4px;
+}
+
+.oc-document-body h3 {
+  font-family: 'Outfit', 'Inter', sans-serif;
+  font-size: 11pt;
+  font-weight: 700;
+  color: #1a365d;
+  margin: 18px 0 10px;
+}
+
+.oc-document-body p {
+  margin: 0 0 11px;
+  text-align: justify;
+  text-indent: 0;
+}
+.oc-document-body p.sub {
+  margin-left: 22px;
+  margin-bottom: 9px;
+  font-size: 10.5pt;
+}
+.oc-document-body p strong { font-weight: 600; color: #1a365d; }
+
+.oc-document-body ul,
+.oc-document-body ol { margin: 0 0 12px 26px; }
+.oc-document-body li { margin-bottom: 4px; }
+
+.oc-document-body .doc-party {
+  border: 2px solid #1a365d;
+  border-radius: 6px;
+  padding: 16px 20px;
+  margin: 0 0 14px;
+  background: linear-gradient(135deg, #f8fafc, #f1f5f9);
+  text-align: justify;
+}
+
+.oc-document-body .doc-closing { margin-top: 22px; }
+.oc-document-body .doc-date {
+  margin-top: 20px;
+  margin-bottom: 24px;
+  text-align: justify;
+}
+
+.oc-document-body .doc-signatures {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 40px;
+  margin-top: 40px;
+}
+.oc-document-body .sig { text-align: center; }
+.oc-document-body .sig-name {
+  border-top: 1px solid #1e293b;
+  padding-top: 6px;
+  font-weight: 600;
+  font-size: 10.5pt;
+}
+.oc-document-body .sig-role {
+  font-size: 9pt;
+  color: #64748b;
+  margin-top: 2px;
+}
+
+/* Receipt-specific elements */
+.oc-document-body .doc-receipt-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 24px;
+  padding-bottom: 16px;
+  margin-bottom: 24px;
+  border-bottom: 2px solid #c9a84c;
+}
+.oc-document-body .doc-receipt-left .company-name {
+  font-family: 'Outfit', sans-serif;
+  font-size: 18pt;
+  font-weight: 700;
+  color: #1a365d;
+  letter-spacing: 1px;
+}
+.oc-document-body .doc-receipt-left .company-subtitle {
+  font-size: 9pt;
+  color: #64748b;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  margin-bottom: 10px;
+}
+.oc-document-body .doc-receipt-left .company-info {
+  font-size: 9pt;
+  color: #475569;
+  line-height: 1.5;
+}
+.oc-document-body .doc-receipt-right { text-align: right; }
+.oc-document-body .invoice-label {
+  font-size: 9pt;
+  color: #64748b;
+  letter-spacing: 2px;
+}
+.oc-document-body .invoice-number {
+  font-family: 'Outfit', monospace;
+  font-size: 16pt;
+  font-weight: 700;
+  color: #1a365d;
+  margin: 4px 0;
+}
+.oc-document-body .invoice-ref {
+  font-size: 10pt;
+  color: #475569;
+  font-weight: 500;
+}
+
+.oc-document-body .doc-parties {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin-bottom: 20px;
+}
+.oc-document-body .doc-party-box {
+  background: #f8fafc;
+  border-left: 3px solid #c9a84c;
+  padding: 12px 14px;
+  border-radius: 0 4px 4px 0;
+}
+.oc-document-body .doc-party-box .party-label {
+  display: block;
+  font-size: 8.5pt;
+  font-weight: 700;
+  color: #c9a84c;
+  letter-spacing: 1.5px;
+  margin-bottom: 6px;
+}
+.oc-document-body .doc-party-box p {
+  font-size: 10pt;
+  margin: 0;
+  line-height: 1.45;
+  text-align: left;
+}
+
+.oc-document-body .doc-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 18px 0;
+  font-size: 10.5pt;
+}
+.oc-document-body .doc-table th,
+.oc-document-body .doc-table td {
+  padding: 10px 12px;
+  text-align: left;
+  border-bottom: 1px solid #e2e8f0;
+}
+.oc-document-body .doc-table th {
+  background: #1a365d;
+  color: #fff;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  font-size: 9pt;
+}
+.oc-document-body .doc-table .right { text-align: right; }
+.oc-document-body .doc-table .item-sub {
+  font-size: 9pt;
+  color: #64748b;
+}
+
+.oc-document-body .doc-totals {
+  margin-left: auto;
+  width: 55%;
+  margin-top: 10px;
+}
+.oc-document-body .doc-totals .totals-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 6px 0;
+  border-bottom: 1px solid #f1f5f9;
+  font-size: 10.5pt;
+}
+.oc-document-body .doc-totals .totals-row.final {
+  border-top: 2px solid #1a365d;
+  border-bottom: none;
+  margin-top: 6px;
+  padding-top: 10px;
+  font-weight: 700;
+  font-size: 12pt;
+  color: #1a365d;
+}
+.oc-document-body .doc-totals .total-extenso {
+  margin-top: 6px;
+  font-size: 9pt;
+  font-style: italic;
+  color: #64748b;
+  text-align: right;
+}
+
+.oc-document-body .doc-payment-info {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+  background: #f8fafc;
+  padding: 14px 16px;
+  border-radius: 6px;
+  margin-top: 20px;
+}
+.oc-document-body .doc-payment-info .info-label {
+  display: block;
+  font-size: 8.5pt;
+  color: #64748b;
+  letter-spacing: 1px;
+  margin-bottom: 4px;
+  text-transform: uppercase;
+}
+.oc-document-body .doc-payment-info .info-value {
+  display: block;
+  font-size: 10.5pt;
+  color: #1e293b;
+  font-weight: 600;
+}
+.oc-document-body .doc-payment-info .status-paid { color: #10b981; }
+.oc-document-body .doc-payment-info .status-pending { color: #f59e0b; }
+
+.oc-document-body .doc-legal {
+  background: #fef9e7;
+  border-left: 3px solid #c9a84c;
+  padding: 12px 16px;
+  margin-top: 18px;
+  font-style: italic;
+  font-size: 10pt;
+  border-radius: 0 4px 4px 0;
+  text-align: justify;
+}
+
+/* Placeholder visual marker inside editor/viewer */
+.oc-document-body .placeholder {
+  background: #fef3c7;
+  color: #92400e;
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 9pt;
+}
+
+/* Print */
+@media print {
+  body * { visibility: hidden; }
+  .oc-document-printable, .oc-document-printable * { visibility: visible; }
+  .oc-document-printable {
+    position: absolute;
+    left: 0; top: 0;
+    width: 100%;
+  }
+}

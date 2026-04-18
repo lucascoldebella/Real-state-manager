@@ -3,7 +3,8 @@
 
 import React, { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import { Search, Plus, Pencil, Trash2, UserRoundPlus, Mail, Phone, FileText } from 'lucide-react';
+import { useRouter } from 'next/navigation';
+import { Search, Plus, Pencil, Trash2, UserRoundPlus, Mail, Phone, FileText, CheckCircle2, X } from 'lucide-react';
 import { Card } from '../../../components/ui/Card/Card';
 import { Badge } from '../../../components/ui/Badge/Badge';
 import { Button } from '../../../components/ui/Button/Button';
@@ -24,6 +25,7 @@ const formatDate = (value: string): string => {
 };
 
 export default function TenantsPage() {
+  const router = useRouter();
   const [tenants, setTenants] = useState<Tenant[]>([]);
   const [preRegistrations, setPreRegistrations] = useState<PreRegistration[]>([]);
   const [loading, setLoading] = useState(true);
@@ -35,6 +37,7 @@ export default function TenantsPage() {
   const [deletingId, setDeletingId] = useState<number | null>(null);
   const [deletePreId, setDeletePreId] = useState<number | null>(null);
   const [prefillData, setPrefillData] = useState<TenantPrefillData | null>(null);
+  const [newlyCreatedId, setNewlyCreatedId] = useState<number | null>(null);
 
   const load = React.useCallback(async () => {
     setLoading(true);
@@ -270,6 +273,43 @@ export default function TenantsPage() {
         )}
       </Card>
 
+      {/* "Gerar Contrato" banner after tenant creation */}
+      {newlyCreatedId !== null && (
+        <div style={{
+          position: 'fixed', bottom: 24, left: '50%', transform: 'translateX(-50%)',
+          background: '#0f172a', color: '#e2e8f0', borderRadius: 12,
+          padding: '14px 20px', display: 'flex', alignItems: 'center', gap: 14,
+          boxShadow: '0 20px 50px rgba(0,0,0,0.35)', zIndex: 9999,
+          fontFamily: 'var(--font-sans)', fontSize: '0.875rem', fontWeight: 500,
+          maxWidth: 520, width: 'calc(100vw - 48px)',
+        }}>
+          <CheckCircle2 size={20} style={{ color: '#4ade80', flexShrink: 0 }} />
+          <span style={{ flex: 1 }}>Inquilino criado com sucesso! Deseja gerar o contrato agora?</span>
+          <button
+            onClick={() => {
+              const id = newlyCreatedId;
+              setNewlyCreatedId(null);
+              router.push(`/documents/contract?tenantId=${id}`);
+            }}
+            style={{
+              background: '#6366f1', color: 'white', border: 'none', borderRadius: 8,
+              padding: '8px 14px', fontWeight: 700, fontSize: '0.8125rem', cursor: 'pointer',
+              display: 'flex', alignItems: 'center', gap: 6, whiteSpace: 'nowrap',
+              fontFamily: 'var(--font-sans)',
+            }}
+          >
+            <FileText size={14} /> Gerar Contrato
+          </button>
+          <button
+            onClick={() => setNewlyCreatedId(null)}
+            style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: '#94a3b8', padding: 4 }}
+            aria-label="Fechar"
+          >
+            <X size={16} />
+          </button>
+        </div>
+      )}
+
       <TenantFormModal
         isOpen={showCreate}
         mode="create"
@@ -278,7 +318,10 @@ export default function TenantsPage() {
           setShowCreate(false);
           setPrefillData(null);
         }}
-        onSaved={() => void load()}
+        onSaved={(newId) => {
+          void load();
+          if (newId) setNewlyCreatedId(newId);
+        }}
       />
       <TenantFormModal
         isOpen={Boolean(editingTenant)}

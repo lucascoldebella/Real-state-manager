@@ -568,6 +568,9 @@ static int init_schema(void) {
         "tenant_id INTEGER NOT NULL,"
         "document_type TEXT NOT NULL,"
         "file_path TEXT NOT NULL,"
+        "content_html TEXT NOT NULL DEFAULT '',"
+        "reference_month TEXT NOT NULL DEFAULT '',"
+        "is_locked INTEGER NOT NULL DEFAULT 1,"
         "generated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,"
         "FOREIGN KEY(template_id) REFERENCES document_templates(id),"
         "FOREIGN KEY(tenant_id) REFERENCES tenants(id)"
@@ -722,6 +725,22 @@ static int run_schema_migrations(void) {
         }
     }
 
+    if (!table_has_column("documents", "content_html")) {
+        if (!db_exec("ALTER TABLE documents ADD COLUMN content_html TEXT NOT NULL DEFAULT ''")) {
+            return 0;
+        }
+    }
+    if (!table_has_column("documents", "reference_month")) {
+        if (!db_exec("ALTER TABLE documents ADD COLUMN reference_month TEXT NOT NULL DEFAULT ''")) {
+            return 0;
+        }
+    }
+    if (!table_has_column("documents", "is_locked")) {
+        if (!db_exec("ALTER TABLE documents ADD COLUMN is_locked INTEGER NOT NULL DEFAULT 1")) {
+            return 0;
+        }
+    }
+
     if (!db_exec(
             "CREATE TABLE IF NOT EXISTS pre_registrations ("
             "id INTEGER PRIMARY KEY AUTOINCREMENT,"
@@ -770,6 +789,221 @@ static int seed_units(void) {
     return 1;
 }
 
+static const char *MASTER_CONTRACT_HTML =
+    "<h1 class=\"doc-title\">CONTRATO DE LOCAÇÃO DE IMÓVEL RESIDENCIAL</h1>"
+    "<div class=\"doc-party\"><strong>LOCADOR — ESPÓLIO DE ORLANDO OLIVEIRA COSTA</strong>, "
+    "neste ato representado por seu inventariante André Luiz de Oliveira Costa, brasileiro, solteiro, "
+    "advogado, portador do RG nº 710.871 SSP/MS e do CPF nº 601.110.461-49, com endereço profissional "
+    "na Rua 14 de Julho, nº 164, Bairro Santa Doroteia em Campo Grande/MS.</div>"
+    "<div class=\"doc-party\"><strong>LOCATÁRIO(S)</strong> — {{LOCATARIO_NOME}}, RG {{LOCATARIO_RG}}, "
+    "inscrito no CPF sob o nº {{LOCATARIO_CPF}}, {{LOCATARIO_PROFISSAO}}, residente e domiciliado na "
+    "{{LOCATARIO_ENDERECO}}.</div>"
+    "<p><strong>CLÁUSULA PRIMEIRA — OBJETO DA LOCAÇÃO</strong> — Imóvel para uso exclusivamente residencial "
+    "pelo morador {{LOCATARIO_NOME}}, consistindo em uma suíte mobiliada, situado à Av. Eduardo Elias Zahran, "
+    "nº 438, Bairro Jardim Paulista em Campo Grande/MS — CEP 79051-485, contendo cama de casal, geladeira, "
+    "fogão, guarda-roupas e banheiro com chuveiro elétrico, para 01 (uma) pessoa, incluso água e energia "
+    "elétrica, wi-fi em caráter de cortesia.</p>"
+    "<p><em>Parágrafo único.</em></p>"
+    "<p><strong>CLÁUSULA SEGUNDA — PRAZO DA LOCAÇÃO</strong> — A presente locação tem prazo determinado de "
+    "{{CONTRATO_PRAZO}} com início em {{CONTRATO_INICIO}} a {{CONTRATO_FIM}}, findo o qual o imóvel deverá "
+    "ser devolvido ao LOCADOR, independentemente de aviso ou notificação.</p>"
+    "<p><strong>CLÁUSULA TERCEIRA — VALOR DA LOCAÇÃO</strong> — O valor do aluguel será de "
+    "R$ {{ALUGUEL_VALOR}} ({{ALUGUEL_EXTENSO}}) com vencimento todo dia {{ALUGUEL_VENCIMENTO}}.</p>"
+    "<p class=\"sub\">§ 1º — O valor do aluguel será reajustado a cada 12 (doze) meses, de acordo com a "
+    "variação do índice IGPM/FGV, ou outro índice que vier a substituí-lo.</p>"
+    "<p class=\"sub\">§ 2º — O vencimento do aluguel será todo dia {{ALUGUEL_VENCIMENTO}} de cada mês.</p>"
+    "<p class=\"sub\">§ 3º — Ocorrendo atraso o LOCATÁRIO arcará com pagamento de multa de 10%, juros "
+    "moratórios de 1% a.m., correção monetária pelo índice IGPM/FGV ou outro índice que vier a substituí-lo.</p>"
+    "<p class=\"sub\">§ 4º — Os pagamentos dos aluguéis e demais encargos deverão ser realizados no seguinte "
+    "endereço: Rua 14 de Julho, nº 164, Vila Santa Doroteia, em Campo Grande/MS, CEP 79004-394, em horário comercial.</p>"
+    "<h2 class=\"doc-subtitle\">CONDIÇÕES GERAIS</h2>"
+    "<p><strong>CLÁUSULA QUARTA</strong> — No término da locação, o LOCATÁRIO deverá restituir o imóvel ao "
+    "LOCADOR, independentemente de qualquer notificação judicial ou extrajudicial, no estado em que o recebeu, "
+    "devidamente pintado com material de primeira linha e com todas as portas, janelas, vidros, fechaduras, "
+    "piso, forro, instalações elétricas e hidráulicas funcionando regularmente.</p>"
+    "<p><strong>CLÁUSULA QUINTA</strong> — O presente contrato é para moradia exclusiva do LOCATÁRIO, "
+    "sendo vedada a ocupação de terceiros, sem a expressa autorização mediante negociação com o proprietário "
+    "para estipulação de novo valor adicional a este contrato, bem como declara que recebe neste momento as "
+    "Regras de Convivência comunitária anexa a este instrumento, sendo que o valor constante da cláusula do "
+    "pagamento é válido para apenas um morador.</p>"
+    "<p><strong>CLÁUSULA SEXTA</strong> — Durante a vigência da locação, não poderá o LOCATÁRIO, sem "
+    "consentimento por escrito do LOCADOR, ceder, emprestar ou sublocar no todo ou em parte, o imóvel, "
+    "objeto deste contrato.</p>"
+    "<p><strong>CLÁUSULA SÉTIMA</strong> — Deverá o LOCATÁRIO cientificar imediatamente o LOCADOR de "
+    "quaisquer documentos de cobrança de tributos ou encargos, bem como quaisquer intimações ou exigências "
+    "de autoridades públicas, ainda que dirigidas a ele LOCADOR, sob pena de não o fazendo ou demorando-se a "
+    "fazê-lo, responder civil ou criminalmente pelos prejuízos advindos.</p>"
+    "<p><strong>CLÁUSULA OITAVA</strong> — Se o LOCADOR necessitar de intervenção de advogado para receber "
+    "aluguéis ou encargos, seja de forma extrajudicial ou judicial, pagará o LOCATÁRIO, além das cominações "
+    "previstas neste instrumento, os honorários do profissional contratado, na base de 10% (dez por cento) "
+    "no primeiro caso e 20% (vinte por cento) no segundo caso, sobre o valor total devido.</p>"
+    "<p><strong>CLÁUSULA NONA</strong> — Expirado o prazo do presente contrato, poderá o mesmo ser renovado "
+    "em novas bases, de comum acordo entre as partes. Caso, porém, continue o LOCATÁRIO no imóvel, sem "
+    "pactuar a renovação, permanecerão em vigor todas as cláusulas e condições do presente instrumento até a "
+    "entrega real e definitiva do imóvel locado, com exceção do valor do aluguel que será corrigido conforme "
+    "lei em vigor.</p>"
+    "<p><strong>CLÁUSULA DÉCIMA</strong> — O presente contrato será resolvido de plano nos casos de incêndio, "
+    "vendaval, desapropriação, obras determinadas pela autoridade pública que importem na impossibilidade de "
+    "habitação ou utilização do imóvel por mais de 30 (trinta) dias, determinações judiciais ou quaisquer "
+    "outros fatos de força maior que impeçam o uso do imóvel locado, independentemente de notificação ou "
+    "interpelação e sem conferir ao LOCATÁRIO qualquer direito de pleitear indenização ao LOCADOR, quando este "
+    "não houver dado causa, ficando, entretanto, assegurado a ele o direito de pleitear de terceiros possíveis indenizações.</p>"
+    "<p><strong>CLÁUSULA DÉCIMA PRIMEIRA</strong> — É expressamente vedado ao LOCATÁRIO introduzir no imóvel "
+    "quaisquer benfeitorias úteis, necessárias ou voluptuárias sem consentimento expresso do LOCADOR. Se mesmo "
+    "sem autorização assim proceder, ditas benfeitorias serão a critério do LOCADOR consideradas incorporadas "
+    "ao imóvel e não darão margem a direito de retenção ou indenização, ou serão desfeitas às custas do LOCATÁRIO.</p>"
+    "<p class=\"sub\"><strong>Parágrafo único</strong> — Os reparos, os consertos e a manutenção do imóvel, "
+    "além de serem efetuados com o consentimento do LOCADOR, deverão ser executados com material de boa "
+    "qualidade e mão de obra qualificada, de modo a mantê-lo permanentemente em condições de uso.</p>"
+    "<p><strong>CLÁUSULA DÉCIMA SEGUNDA</strong> — Constitui-se em obrigação do LOCATÁRIO manter o imóvel "
+    "locado com o mesmo cuidado como se fosse seu. Para tanto, declara havê-lo recebido em perfeitas "
+    "condições, conforme o termo de vistoria, o qual passará a fazer parte integrante deste contrato.</p>"
+    "<p><strong>CLÁUSULA DÉCIMA TERCEIRA</strong> — O LOCATÁRIO não poderá sob qualquer pretexto impedir a "
+    "visita periódica do LOCADOR com o fim de vistoriar o seu bom uso e zelo.</p>"
+    "<p><strong>CLÁUSULA DÉCIMA QUARTA</strong> — Assume o LOCATÁRIO o formal compromisso de comunicar "
+    "expressamente o interesse em desocupar o imóvel 30 (trinta) dias antes da efetiva desocupação, devendo "
+    "ainda solicitar ao LOCADOR que faça uma vistoria no imóvel, a fim de constatar o seu estado de "
+    "conservação, sob pena de arcar com mais uma mensalidade da locação.</p>"
+    "<p><strong>CLÁUSULA DÉCIMA QUINTA</strong> — A efetiva devolução do imóvel implica em efetiva entrega "
+    "das chaves, sendo que para que tenha eficácia, deverá ser feita contrarrecibo, no endereço declinado no "
+    "§ 4º da Cláusula Terceira.</p>"
+    "<p><strong>CLÁUSULA DÉCIMA SEXTA</strong> — A tolerância do LOCADOR pelo não cumprimento de qualquer ato "
+    "ou obrigação que em virtude deste contrato deva ser praticada ou cumprida, não poderá ser tida como "
+    "alteração ou novação do contido neste instrumento, sendo convencionado o seu reconhecimento como mera liberalidade.</p>"
+    "<p><strong>CLÁUSULA DÉCIMA SÉTIMA</strong> — É expressamente proibido o uso de aparelhos eletrônicos de "
+    "alta consumação energética no imóvel locado, incluindo, mas não se limitando a: fogões e fornos elétricos "
+    "ou de indução, ar-condicionado portátil ou fixo, aquecedores elétricos, radiadores, secadoras de roupa, "
+    "máquinas de lavar de grande porte, churrasqueiras elétricas, fritadeiras industriais, e similares. Caso "
+    "o morador deseje utilizar algum aparelho desta natureza, deverá comunicar previamente ao LOCADOR para "
+    "negociação de ajuste contratual e eventual adequação do valor do aluguel.</p>"
+    "<p><strong>CLÁUSULA DÉCIMA OITAVA</strong> — Os móveis e equipamentos fornecidos pelo LOCADOR, conforme "
+    "descrito na Cláusula Primeira, serão objeto de manutenção conforme as seguintes condições:</p>"
+    "<p class=\"sub\">§ 1º — Danos decorrentes de <strong>desgaste natural pelo uso regular</strong> serão "
+    "reparados ou substituídos pelo LOCADOR, sem custo para o LOCATÁRIO, desde que devidamente comunicados à "
+    "administração para avaliação prévia.</p>"
+    "<p class=\"sub\">§ 2º — Danos decorrentes de <strong>mau uso, negligência ou uso indevido</strong> por "
+    "parte do LOCATÁRIO serão integralmente custeados pelo mesmo, conforme avaliação da administração. O "
+    "LOCATÁRIO será notificado do valor do reparo ou substituição e deverá efetuar o pagamento no prazo de "
+    "15 (quinze) dias a partir da notificação.</p>"
+    "<p class=\"sub\">§ 3º — A classificação do tipo de dano (desgaste natural ou mau uso) será de "
+    "competência exclusiva da administração, que realizará vistoria técnica e emitirá laudo justificativo "
+    "quando solicitado.</p>"
+    "<p><strong>CLÁUSULA DÉCIMA NONA</strong> — O LOCATÁRIO declara ter pleno conhecimento e se compromete a "
+    "cumprir integralmente o <strong>Regimento Interno</strong> do imóvel, que constitui parte integrante "
+    "deste contrato na qualidade de <strong>Anexo I</strong>. O descumprimento das normas do Regimento "
+    "Interno será considerado infração contratual, sujeitando o LOCATÁRIO às penalidades previstas neste instrumento.</p>"
+    "<p class=\"sub\"><strong>Parágrafo único</strong> — O LOCADOR reserva-se o direito de atualizar o "
+    "Regimento Interno mediante comunicação prévia de 15 (quinze) dias ao LOCATÁRIO, passando as novas regras "
+    "a vigorar automaticamente após este prazo.</p>"
+    "<p><strong>CLÁUSULA VIGÉSIMA</strong> — Caso o LOCATÁRIO deseje desocupar o imóvel antes do término do "
+    "contrato, deverá comunicar formalmente a administração com antecedência mínima de 15 (quinze) dias.</p>"
+    "<p class=\"sub\">§ 1º — Sendo a comunicação realizada dentro do prazo estipulado, nenhuma cobrança "
+    "adicional será aplicada ao LOCATÁRIO, ficando este responsável apenas pelos aluguéis e encargos devidos "
+    "até a data efetiva da desocupação.</p>"
+    "<p class=\"sub\">§ 2º — Caso o LOCATÁRIO desocupe o imóvel sem a devida comunicação prévia de 15 "
+    "(quinze) dias, ou abandone o imóvel sem aviso, o ato será considerado <strong>quebra de contrato</strong>, "
+    "ficando o LOCATÁRIO obrigado ao pagamento de multa equivalente a <strong>30% (trinta por cento) do valor "
+    "total dos aluguéis remanescentes</strong> até o término originalmente previsto do contrato.</p>"
+    "<p class=\"sub\">§ 3º — O valor da multa por quebra de contrato será calculado com base no aluguel "
+    "vigente à data da desocupação, multiplicado pelo número de meses restantes e aplicado o percentual de "
+    "30% sobre o montante total.</p>"
+    "<p><strong>CLÁUSULA VIGÉSIMA PRIMEIRA</strong> — Fica estipulada multa correspondente a 03 (três) "
+    "aluguéis à parte que infringir qualquer uma das cláusulas.</p>"
+    "<p class=\"sub\"><strong>Parágrafo único</strong> — A multa será sempre paga integralmente, seja qual "
+    "for o tempo decorrido do presente contrato e não será compensatória de prejuízos e/ou danos causados ao "
+    "imóvel, nem poderá ser tida como indenizatória de aluguéis ou encargos devidos.</p>"
+    "<p class=\"doc-closing\">E por estarem assim, justos e contratados, cientes e de acordo com tudo o quanto "
+    "neste instrumento foi lavrado, firmam em formato digital através do WhatsApp.</p>"
+    "<p class=\"doc-date\">Campo Grande/MS, {{CONTRATO_DATA}}.</p>"
+    "<div class=\"doc-signatures\">"
+    "<div class=\"sig\"><div class=\"sig-name\">ESPÓLIO DE ORLANDO OLIVEIRA COSTA</div><div class=\"sig-role\">LOCADOR</div></div>"
+    "<div class=\"sig\"><div class=\"sig-name\">{{LOCATARIO_NOME}}</div><div class=\"sig-role\">LOCATÁRIO</div></div>"
+    "</div>";
+
+static const char *MASTER_RECEIPT_HTML =
+    "<div class=\"doc-receipt-header\">"
+    "<div class=\"doc-receipt-left\">"
+    "<div class=\"company-name\">OLIVEIRA COSTA</div>"
+    "<div class=\"company-subtitle\">Administração de Imóveis</div>"
+    "<div class=\"company-info\">Av. Eduardo Elias Zahran, nº 438<br>Jardim Paulista — Campo Grande/MS<br>CEP 79051-485</div>"
+    "</div>"
+    "<div class=\"doc-receipt-right\">"
+    "<div class=\"invoice-label\">RECIBO DE PAGAMENTO</div>"
+    "<div class=\"invoice-number\">Nº {{RECIBO_NUMERO}}</div>"
+    "<div class=\"invoice-ref\">Ref: {{REFERENCIA_MES}}</div>"
+    "</div>"
+    "</div>"
+    "<div class=\"doc-parties\">"
+    "<div class=\"doc-party-box\"><span class=\"party-label\">LOCADOR</span>"
+    "<p><strong>Espólio de Orlando Oliveira Costa</strong><br>"
+    "Rep. por André Luiz de Oliveira Costa<br>"
+    "CPF: 601.110.461-49<br>Rua 14 de Julho, nº 164, Santa Doroteia</p></div>"
+    "<div class=\"doc-party-box\"><span class=\"party-label\">LOCATÁRIO</span>"
+    "<p><strong>{{LOCATARIO_NOME}}</strong><br>"
+    "CPF: {{LOCATARIO_CPF}}<br>Unidade: {{UNIDADE}}<br>Tel: {{LOCATARIO_TELEFONE}}</p></div>"
+    "</div>"
+    "<table class=\"doc-table\"><thead><tr>"
+    "<th>Descrição</th><th class=\"right\">Vencimento</th><th class=\"right\">Valor (R$)</th>"
+    "</tr></thead><tbody>"
+    "<tr><td><strong>Aluguel — {{REFERENCIA_MES}}</strong><br>"
+    "<span class=\"item-sub\">Unidade {{UNIDADE}}</span></td>"
+    "<td class=\"right\">{{VENCIMENTO}}</td><td class=\"right\">{{VALOR_ALUGUEL}}</td></tr>"
+    "{{LINHA_MULTA}}"
+    "</tbody></table>"
+    "<div class=\"doc-totals\">"
+    "<div class=\"totals-row\"><span>Subtotal</span><span>{{VALOR_ALUGUEL}}</span></div>"
+    "{{LINHA_TOTAL_MULTA}}"
+    "<div class=\"totals-row final\"><span>Total</span><span>{{VALOR_TOTAL}}</span></div>"
+    "<div class=\"total-extenso\">({{VALOR_EXTENSO}})</div>"
+    "</div>"
+    "<div class=\"doc-payment-info\">"
+    "<div><span class=\"info-label\">Forma de Pagamento</span><span class=\"info-value\">{{FORMA_PAGAMENTO}}</span></div>"
+    "<div><span class=\"info-label\">Data do Pagamento</span><span class=\"info-value\">{{DATA_PAGAMENTO}}</span></div>"
+    "<div><span class=\"info-label\">Status</span><span class=\"info-value status-{{STATUS_KEY}}\">{{STATUS_LABEL}}</span></div>"
+    "</div>"
+    "<p class=\"doc-legal\">Declaro, para os devidos fins, que recebi a importância acima especificada "
+    "referente ao aluguel do imóvel descrito, dando plena e total quitação do valor correspondente ao "
+    "período indicado.</p>"
+    "<p class=\"doc-date\">Campo Grande/MS, {{DATA_EMISSAO}}.</p>"
+    "<div class=\"doc-signatures\">"
+    "<div class=\"sig\"><div class=\"sig-name\">ESPÓLIO DE ORLANDO OLIVEIRA COSTA</div><div class=\"sig-role\">LOCADOR</div></div>"
+    "<div class=\"sig\"><div class=\"sig-name\">{{LOCATARIO_NOME}}</div><div class=\"sig-role\">LOCATÁRIO</div></div>"
+    "</div>";
+
+static void seed_master_contract_template(void) {
+    if (count_query_int("SELECT COUNT(*) FROM document_templates WHERE document_type='rental_contract_master'") > 0) {
+        return;
+    }
+    sqlite3_stmt *stmt = NULL;
+    if (sqlite3_prepare_v2(g_app.db,
+                           "INSERT INTO document_templates(name, document_type, template_body) VALUES(?,?,?)",
+                           -1, &stmt, NULL) != SQLITE_OK) {
+        return;
+    }
+    sqlite3_bind_text(stmt, 1, "Modelo Mestre — Contrato de Locação", -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 2, "rental_contract_master", -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 3, MASTER_CONTRACT_HTML, -1, SQLITE_TRANSIENT);
+    sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+}
+
+static void seed_master_receipt_template(void) {
+    if (count_query_int("SELECT COUNT(*) FROM document_templates WHERE document_type='payment_receipt_master'") > 0) {
+        return;
+    }
+    sqlite3_stmt *stmt = NULL;
+    if (sqlite3_prepare_v2(g_app.db,
+                           "INSERT INTO document_templates(name, document_type, template_body) VALUES(?,?,?)",
+                           -1, &stmt, NULL) != SQLITE_OK) {
+        return;
+    }
+    sqlite3_bind_text(stmt, 1, "Modelo Mestre — Recibo de Pagamento", -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 2, "payment_receipt_master", -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 3, MASTER_RECEIPT_HTML, -1, SQLITE_TRANSIENT);
+    sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+}
+
 static int seed_data(void) {
     if (table_count("users") == 0) {
         char hash[65];
@@ -811,6 +1045,9 @@ static int seed_data(void) {
             "SELECT 'Eviction Notice Template', 'eviction_notice', "
             "'{{tenant_name}} - Unit {{unit_number}}\\n\\n[Edit this eviction template in Document Center.]' "
             "WHERE NOT EXISTS(SELECT 1 FROM document_templates WHERE document_type='eviction_notice')");
+
+    seed_master_contract_template();
+    seed_master_receipt_template();
 
     if (table_count("tenants") == 0) {
         db_exec(
@@ -3544,7 +3781,8 @@ static int handle_get_documents(struct MHD_Connection *connection, const char *t
 
     sqlite3_stmt *stmt = NULL;
     const char *sql =
-        "SELECT d.id, d.template_id, d.tenant_id, t.full_name, d.document_type, d.file_path, d.generated_at "
+        "SELECT d.id, d.template_id, d.tenant_id, t.full_name, d.document_type, d.file_path, d.generated_at, "
+        "IFNULL(d.reference_month,''), IFNULL(d.is_locked,1) "
         "FROM documents d JOIN tenants t ON t.id=d.tenant_id "
         "WHERE (? = 0 OR d.tenant_id = ?) ORDER BY d.generated_at DESC";
 
@@ -3567,6 +3805,8 @@ static int handle_get_documents(struct MHD_Connection *connection, const char *t
         cJSON_AddStringToObject(item, "document_type", (const char *) sqlite3_column_text(stmt, 4));
         cJSON_AddStringToObject(item, "file_path", (const char *) sqlite3_column_text(stmt, 5));
         cJSON_AddStringToObject(item, "generated_at", (const char *) sqlite3_column_text(stmt, 6));
+        cJSON_AddStringToObject(item, "reference_month", (const char *) sqlite3_column_text(stmt, 7));
+        cJSON_AddBoolToObject(item, "is_locked", sqlite3_column_int(stmt, 8) == 1);
 
         char download_url[128];
         snprintf(download_url, sizeof(download_url), "/api/documents/download/%d", doc_id);
@@ -3577,6 +3817,222 @@ static int handle_get_documents(struct MHD_Connection *connection, const char *t
 
     int ret = send_json(connection, MHD_HTTP_OK, root);
     cJSON_Delete(root);
+    return ret;
+}
+
+static int handle_get_document(struct MHD_Connection *connection, int doc_id) {
+    sqlite3_stmt *stmt = NULL;
+    const char *sql =
+        "SELECT d.id, d.template_id, d.tenant_id, t.full_name, d.document_type, d.file_path, d.generated_at, "
+        "IFNULL(d.content_html,''), IFNULL(d.reference_month,''), IFNULL(d.is_locked,1) "
+        "FROM documents d JOIN tenants t ON t.id=d.tenant_id WHERE d.id=?";
+    if (sqlite3_prepare_v2(g_app.db, sql, -1, &stmt, NULL) != SQLITE_OK) {
+        return send_error(connection, MHD_HTTP_INTERNAL_SERVER_ERROR, "db_prepare_failed");
+    }
+    sqlite3_bind_int(stmt, 1, doc_id);
+
+    if (sqlite3_step(stmt) != SQLITE_ROW) {
+        sqlite3_finalize(stmt);
+        return send_error(connection, MHD_HTTP_NOT_FOUND, "document_not_found");
+    }
+
+    cJSON *item = cJSON_CreateObject();
+    cJSON_AddNumberToObject(item, "id", sqlite3_column_int(stmt, 0));
+    cJSON_AddNumberToObject(item, "template_id", sqlite3_column_int(stmt, 1));
+    cJSON_AddNumberToObject(item, "tenant_id", sqlite3_column_int(stmt, 2));
+    cJSON_AddStringToObject(item, "tenant_name", (const char *) sqlite3_column_text(stmt, 3));
+    cJSON_AddStringToObject(item, "document_type", (const char *) sqlite3_column_text(stmt, 4));
+    cJSON_AddStringToObject(item, "file_path", (const char *) sqlite3_column_text(stmt, 5));
+    cJSON_AddStringToObject(item, "generated_at", (const char *) sqlite3_column_text(stmt, 6));
+    cJSON_AddStringToObject(item, "content_html", (const char *) sqlite3_column_text(stmt, 7));
+    cJSON_AddStringToObject(item, "reference_month", (const char *) sqlite3_column_text(stmt, 8));
+    cJSON_AddBoolToObject(item, "is_locked", sqlite3_column_int(stmt, 9) == 1);
+
+    char download_url[128];
+    snprintf(download_url, sizeof(download_url), "/api/documents/download/%d", sqlite3_column_int(stmt, 0));
+    cJSON_AddStringToObject(item, "download_url", download_url);
+
+    sqlite3_finalize(stmt);
+    int ret = send_json(connection, MHD_HTTP_OK, item);
+    cJSON_Delete(item);
+    return ret;
+}
+
+static int handle_save_document_html(struct MHD_Connection *connection, const char *body) {
+    cJSON *input = cJSON_Parse(body ? body : "");
+    if (!input) {
+        return send_error(connection, MHD_HTTP_BAD_REQUEST, "invalid_json");
+    }
+
+    int tenant_id = json_int(input, "tenant_id", 0);
+    const char *document_type = json_string(input, "document_type");
+    const char *content_html = json_string(input, "content_html");
+    const char *reference_month = json_string(input, "reference_month");
+
+    if (tenant_id <= 0 || !document_type || !content_html) {
+        cJSON_Delete(input);
+        return send_error(connection, MHD_HTTP_BAD_REQUEST, "tenant_id_document_type_content_html_required");
+    }
+
+    int template_id = 0;
+    sqlite3_stmt *stmt = NULL;
+    const char *master_type = strcmp(document_type, "rental_contract") == 0
+                                  ? "rental_contract_master"
+                                  : (strcmp(document_type, "payment_receipt") == 0 ? "payment_receipt_master" : document_type);
+    if (sqlite3_prepare_v2(g_app.db, "SELECT id FROM document_templates WHERE document_type=? LIMIT 1", -1, &stmt, NULL) ==
+        SQLITE_OK) {
+        sqlite3_bind_text(stmt, 1, master_type, -1, SQLITE_TRANSIENT);
+        if (sqlite3_step(stmt) == SQLITE_ROW) {
+            template_id = sqlite3_column_int(stmt, 0);
+        }
+    }
+    sqlite3_finalize(stmt);
+
+    if (template_id <= 0) {
+        cJSON_Delete(input);
+        return send_error(connection, MHD_HTTP_NOT_FOUND, "master_template_not_found");
+    }
+
+    if (strcmp(document_type, "rental_contract") == 0) {
+        int existing = 0;
+        if (sqlite3_prepare_v2(g_app.db,
+                               "SELECT COUNT(*) FROM documents WHERE tenant_id=? AND document_type='rental_contract'",
+                               -1, &stmt, NULL) == SQLITE_OK) {
+            sqlite3_bind_int(stmt, 1, tenant_id);
+            if (sqlite3_step(stmt) == SQLITE_ROW) {
+                existing = sqlite3_column_int(stmt, 0);
+            }
+        }
+        sqlite3_finalize(stmt);
+        if (existing > 0) {
+            cJSON_Delete(input);
+            return send_error(connection, MHD_HTTP_CONFLICT, "contract_already_exists_for_tenant");
+        }
+    }
+
+    char ts[32];
+    now_iso_datetime(ts);
+    for (size_t i = 0; i < strlen(ts); i++) {
+        if (ts[i] == ' ' || ts[i] == ':') {
+            ts[i] = '_';
+        }
+    }
+    char file_path[768];
+    snprintf(file_path, sizeof(file_path), "%s/doc_%d_%s.html", g_app.generated_dir, tenant_id, ts);
+    FILE *fp = fopen(file_path, "w");
+    if (fp) {
+        fwrite(content_html, 1, strlen(content_html), fp);
+        fclose(fp);
+    }
+
+    const char *sql =
+        "INSERT INTO documents(template_id, tenant_id, document_type, file_path, content_html, reference_month, is_locked) "
+        "VALUES(?,?,?,?,?,?,1)";
+    if (sqlite3_prepare_v2(g_app.db, sql, -1, &stmt, NULL) != SQLITE_OK) {
+        cJSON_Delete(input);
+        return send_error(connection, MHD_HTTP_INTERNAL_SERVER_ERROR, "db_prepare_failed");
+    }
+    sqlite3_bind_int(stmt, 1, template_id);
+    sqlite3_bind_int(stmt, 2, tenant_id);
+    sqlite3_bind_text(stmt, 3, document_type, -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 4, file_path, -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 5, content_html, -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 6, reference_month ? reference_month : "", -1, SQLITE_TRANSIENT);
+
+    int ok = sqlite3_step(stmt) == SQLITE_DONE;
+    sqlite3_finalize(stmt);
+    if (!ok) {
+        cJSON_Delete(input);
+        return send_error(connection, MHD_HTTP_INTERNAL_SERVER_ERROR, "document_save_failed");
+    }
+
+    int doc_id = sqlite3_last_insert_rowid(g_app.db);
+    cJSON *out = cJSON_CreateObject();
+    cJSON_AddNumberToObject(out, "id", doc_id);
+    cJSON_AddStringToObject(out, "message", "document_saved");
+    int ret = send_json(connection, MHD_HTTP_CREATED, out);
+    cJSON_Delete(out);
+    cJSON_Delete(input);
+    return ret;
+}
+
+static int handle_update_document(struct MHD_Connection *connection, int doc_id, const char *body,
+                                  const AuthUser *user) {
+    if (!user || user->is_root != 1) {
+        return send_error(connection, MHD_HTTP_FORBIDDEN, "root_required");
+    }
+    cJSON *input = cJSON_Parse(body ? body : "");
+    if (!input) {
+        return send_error(connection, MHD_HTTP_BAD_REQUEST, "invalid_json");
+    }
+    const char *content_html = json_string(input, "content_html");
+    if (!content_html) {
+        cJSON_Delete(input);
+        return send_error(connection, MHD_HTTP_BAD_REQUEST, "content_html_required");
+    }
+
+    sqlite3_stmt *stmt = NULL;
+    if (sqlite3_prepare_v2(g_app.db, "UPDATE documents SET content_html=? WHERE id=?", -1, &stmt, NULL) != SQLITE_OK) {
+        cJSON_Delete(input);
+        return send_error(connection, MHD_HTTP_INTERNAL_SERVER_ERROR, "db_prepare_failed");
+    }
+    sqlite3_bind_text(stmt, 1, content_html, -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int(stmt, 2, doc_id);
+    int ok = sqlite3_step(stmt) == SQLITE_DONE;
+    int changes = sqlite3_changes(g_app.db);
+    sqlite3_finalize(stmt);
+    cJSON_Delete(input);
+
+    if (!ok || changes == 0) {
+        return send_error(connection, MHD_HTTP_NOT_FOUND, "document_not_found");
+    }
+
+    cJSON *out = cJSON_CreateObject();
+    cJSON_AddStringToObject(out, "message", "document_updated");
+    int ret = send_json(connection, MHD_HTTP_OK, out);
+    cJSON_Delete(out);
+    return ret;
+}
+
+static int handle_delete_document(struct MHD_Connection *connection, int doc_id, const AuthUser *user) {
+    if (!user || user->is_root != 1) {
+        return send_error(connection, MHD_HTTP_FORBIDDEN, "root_required");
+    }
+
+    char file_path[768] = {0};
+    sqlite3_stmt *stmt = NULL;
+    if (sqlite3_prepare_v2(g_app.db, "SELECT file_path FROM documents WHERE id=?", -1, &stmt, NULL) == SQLITE_OK) {
+        sqlite3_bind_int(stmt, 1, doc_id);
+        if (sqlite3_step(stmt) == SQLITE_ROW) {
+            const unsigned char *t = sqlite3_column_text(stmt, 0);
+            if (t) {
+                snprintf(file_path, sizeof(file_path), "%s", (const char *) t);
+            }
+        }
+    }
+    sqlite3_finalize(stmt);
+
+    if (file_path[0] == '\0') {
+        return send_error(connection, MHD_HTTP_NOT_FOUND, "document_not_found");
+    }
+
+    if (sqlite3_prepare_v2(g_app.db, "DELETE FROM documents WHERE id=?", -1, &stmt, NULL) != SQLITE_OK) {
+        return send_error(connection, MHD_HTTP_INTERNAL_SERVER_ERROR, "db_prepare_failed");
+    }
+    sqlite3_bind_int(stmt, 1, doc_id);
+    int ok = sqlite3_step(stmt) == SQLITE_DONE;
+    sqlite3_finalize(stmt);
+    if (!ok) {
+        return send_error(connection, MHD_HTTP_INTERNAL_SERVER_ERROR, "document_delete_failed");
+    }
+    if (file_path[0] != '\0') {
+        unlink(file_path);
+    }
+
+    cJSON *out = cJSON_CreateObject();
+    cJSON_AddStringToObject(out, "message", "document_deleted");
+    int ret = send_json(connection, MHD_HTTP_OK, out);
+    cJSON_Delete(out);
     return ret;
 }
 
@@ -4037,6 +4493,11 @@ static int route_request(struct MHD_Connection *connection, const char *url, con
         goto done;
     }
 
+    if (strcmp(url, "/api/documents/save") == 0 && strcmp(method, "POST") == 0) {
+        ret = handle_save_document_html(connection, body);
+        goto done;
+    }
+
     if (strcmp(url, "/api/documents") == 0 && strcmp(method, "GET") == 0) {
         ret = handle_get_documents(connection, MHD_lookup_connection_value(connection, MHD_GET_ARGUMENT_KIND, "tenant_id"));
         goto done;
@@ -4046,6 +4507,22 @@ static int route_request(struct MHD_Connection *connection, const char *url, con
     if (parse_id_path(url, "/api/documents/download/", &doc_id) && strcmp(method, "GET") == 0) {
         ret = handle_download_document(connection, doc_id);
         goto done;
+    }
+
+    int single_doc_id = 0;
+    if (parse_id_path(url, "/api/documents/", &single_doc_id)) {
+        if (strcmp(method, "GET") == 0) {
+            ret = handle_get_document(connection, single_doc_id);
+            goto done;
+        }
+        if (strcmp(method, "PUT") == 0) {
+            ret = handle_update_document(connection, single_doc_id, body, &auth_user);
+            goto done;
+        }
+        if (strcmp(method, "DELETE") == 0) {
+            ret = handle_delete_document(connection, single_doc_id, &auth_user);
+            goto done;
+        }
     }
 
     if (strcmp(url, "/api/notifications") == 0 && strcmp(method, "GET") == 0) {

@@ -171,6 +171,23 @@ export interface DocumentItem {
   file_path: string;
   generated_at: string;
   download_url: string;
+  reference_month?: string;
+  is_locked?: boolean;
+  content_html?: string;
+}
+
+export interface PaymentItem {
+  id: number;
+  tenant_id: number;
+  tenant_name: string;
+  month: string;
+  amount: number;
+  status: string;
+  due_date: string;
+  paid_at: string;
+  late_fee: number;
+  payment_method: string;
+  notes: string;
 }
 
 export interface FinanceMonthlyTrend {

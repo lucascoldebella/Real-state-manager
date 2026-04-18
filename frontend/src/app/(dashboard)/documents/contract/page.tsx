@@ -1,90 +1,129 @@
 'use client';
 
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
-import { ArrowLeft, Download, Printer, ZoomIn, ZoomOut, FileText } from 'lucide-react';
-import { apiGet } from '../../../../lib/api';
-import type { Tenant } from '../../../../lib/types';
+import {
+  ArrowLeft,
+  Download,
+  Printer,
+  ZoomIn,
+  ZoomOut,
+  FileText,
+  Users,
+  Clock,
+  Lock,
+  Shield,
+  Eye,
+  Pencil,
+  Save,
+  AlertTriangle,
+  Trash2,
+  CheckCircle2,
+  X,
+  Bold,
+  Italic,
+  Underline,
+  List,
+  ListOrdered,
+  AlignLeft,
+  AlignCenter,
+  AlignRight,
+} from 'lucide-react';
+import { apiGet, apiPost, apiPut, apiDelete, getStoredUser } from '../../../../lib/api';
+import type { Tenant, DocumentItem, DocumentTemplate } from '../../../../lib/types';
+import {
+  formatDateBR,
+  buildContractPlaceholders,
+  applyPlaceholders,
+} from '../../../../lib/document-helpers';
 import styles from './page.module.css';
 
-const numberToPortuguese = (n: number): string => {
-  if (n === 0) return 'zero';
-  const units = ['', 'um', 'dois', 'três', 'quatro', 'cinco', 'seis', 'sete', 'oito', 'nove',
-    'dez', 'onze', 'doze', 'treze', 'quatorze', 'quinze', 'dezesseis', 'dezessete', 'dezoito', 'dezenove'];
-  const tens = ['', '', 'vinte', 'trinta', 'quarenta', 'cinquenta', 'sessenta', 'setenta', 'oitenta', 'noventa'];
-  const hundreds = ['', 'cento', 'duzentos', 'trezentos', 'quatrocentos', 'quinhentos',
-    'seiscentos', 'setecentos', 'oitocentos', 'novecentos'];
-
-  if (n === 100) return 'cem';
-
-  const parts: string[] = [];
-  const h = Math.floor(n / 100);
-  const remainder = n % 100;
-
-  if (h > 0) parts.push(hundreds[h]);
-  if (remainder > 0 && remainder < 20) {
-    parts.push(units[remainder]);
-  } else if (remainder >= 20) {
-    const t = Math.floor(remainder / 10);
-    const u = remainder % 10;
-    parts.push(u > 0 ? `${tens[t]} e ${units[u]}` : tens[t]);
-  }
-  return parts.join(' e ');
-};
-
-const formatRentExtended = (value: number): string => {
-  const intPart = Math.floor(value);
-  const cents = Math.round((value - intPart) * 100);
-  let result = numberToPortuguese(intPart) + ' reais';
-  if (cents > 0) result += ` e ${numberToPortuguese(cents)} centavos`;
-  return result;
-};
-
-const formatDateBR = (isoDate: string): string => {
-  if (!isoDate) return '';
-  const d = new Date(isoDate);
-  if (isNaN(d.getTime())) return isoDate;
-  return d.toLocaleDateString('pt-BR');
-};
-
-const monthsBetween = (start: string, end: string): number => {
-  const s = new Date(start);
-  const e = new Date(end);
-  return Math.max(1, Math.round((e.getTime() - s.getTime()) / (1000 * 60 * 60 * 24 * 30)));
-};
-
-const todayBR = (): string => {
-  const d = new Date();
-  const months = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho',
-    'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
-  return `${d.getDate()} de ${months[d.getMonth()]} de ${d.getFullYear()}`;
-};
+type ViewMode = 'dashboard' | 'master' | 'tenant';
 
 export default function ContractViewerPage() {
   const searchParams = useSearchParams();
-  const tenantId = searchParams.get('tenantId');
+  const initialTenantId = searchParams.get('tenantId');
+
+  const [tenants, setTenants] = useState<Tenant[]>([]);
+  const [documents, setDocuments] = useState<DocumentItem[]>([]);
+  const [masterTemplate, setMasterTemplate] = useState<DocumentTemplate | null>(null);
+
   const [tenant, setTenant] = useState<Tenant | null>(null);
-  const [loading, setLoading] = useState(!!tenantId);
+  const [selectedTenantId, setSelectedTenantId] = useState(initialTenantId || '');
+
+  const [tenantDoc, setTenantDoc] = useState<DocumentItem | null>(null);
+  const [editorHtml, setEditorHtml] = useState<string>('');
+  const [originalHtml, setOriginalHtml] = useState<string>('');
+
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
   const [zoom, setZoom] = useState(100);
   const [toast, setToast] = useState('');
+  const [view, setView] = useState<ViewMode>(initialTenantId ? 'tenant' : 'dashboard');
+  const [editMode, setEditMode] = useState(false);
+  const [showConfirmGenerate, setShowConfirmGenerate] = useState(false);
+  const [showConfirmDelete, setShowConfirmDelete] = useState(false);
+
   const docRef = useRef<HTMLDivElement>(null);
-  const wrapperRef = useRef<HTMLDivElement>(null);
+  const contentEditableRef = useRef<HTMLDivElement>(null);
+
+  // Sync editorHtml → DOM imperatively so React never resets innerHTML during typing.
+  // editMode in deps ensures the freshly-mounted contentEditable div gets populated.
+  useEffect(() => {
+    const el = contentEditableRef.current;
+    if (!el) return;
+    if (el.innerHTML !== editorHtml) {
+      el.innerHTML = editorHtml;
+    }
+  }, [editorHtml, editMode]);
+
+  const user = getStoredUser();
+  const isRoot = user?.is_root === true;
+
+  const loadAll = useCallback(async () => {
+    setLoading(true);
+    try {
+      const [tenantsRes, docsRes, templatesRes] = await Promise.all([
+        apiGet<{ items: Tenant[] }>('/api/tenants'),
+        apiGet<{ items: DocumentItem[] }>('/api/documents'),
+        apiGet<{ items: DocumentTemplate[] }>('/api/document-templates'),
+      ]);
+      const active = (tenantsRes.items || []).filter((t) => t.active);
+      setTenants(active);
+      setDocuments((docsRes.items || []).filter((d) => d.document_type === 'rental_contract'));
+      const master = (templatesRes.items || []).find((t) => t.document_type === 'rental_contract_master') || null;
+      setMasterTemplate(master);
+    } catch {
+      // silent
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
   useEffect(() => {
-    if (!tenantId) return;
-    (async () => {
-      try {
-        const res = await apiGet<{ items: Tenant[] }>('/api/tenants');
-        const found = (res.items || []).find(t => t.id === Number(tenantId));
-        if (found) setTenant(found);
-      } catch {
-        /* tenant not found */
-      } finally {
-        setLoading(false);
-      }
-    })();
-  }, [tenantId]);
+    void loadAll();
+  }, [loadAll]);
+
+  useEffect(() => {
+    if (!initialTenantId || tenants.length === 0) return;
+    const found = tenants.find((t) => t.id === Number(initialTenantId));
+    if (found) {
+      void openTenantViewer(found.id.toString());
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tenants, initialTenantId]);
+
+  const expiringContracts = useMemo(
+    () =>
+      tenants.filter((t) => {
+        if (!t.contract_end) return false;
+        const end = new Date(t.contract_end);
+        const diff = (end.getTime() - Date.now()) / (1000 * 60 * 60 * 24);
+        return diff >= 0 && diff <= 30;
+      }).length,
+    [tenants],
+  );
 
   const showToast = useCallback((msg: string) => {
     setToast(msg);
@@ -98,13 +137,15 @@ export default function ContractViewerPage() {
     const el = docRef.current;
     if (!el) return;
     const html2pdf = (await import('html2pdf.js')).default;
-    const filename = tenant
-      ? `Contrato_${tenant.full_name.replace(/\s+/g, '_')}.pdf`
-      : 'Contrato_Modelo.pdf';
+    const baseName = view === 'master'
+      ? 'Contrato_Modelo'
+      : tenant
+        ? `Contrato_${tenant.full_name.replace(/\s+/g, '_')}`
+        : 'Contrato';
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (html2pdf() as any).set({
       margin: 0,
-      filename,
+      filename: `${baseName}.pdf`,
       image: { type: 'jpeg', quality: 0.98 },
       html2canvas: { scale: 2, useCORS: true },
       jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
@@ -112,397 +153,503 @@ export default function ContractViewerPage() {
     }).from(el).save().then(() => showToast('PDF salvo com sucesso!'));
   };
 
-  const zoomIn = () => setZoom(z => Math.min(200, z + 10));
-  const zoomOut = () => setZoom(z => Math.max(50, z - 10));
+  const zoomIn = () => setZoom((z) => Math.min(200, z + 10));
+  const zoomOut = () => setZoom((z) => Math.max(50, z - 10));
 
-  // Decide whether to show a placeholder or the real value
-  const V = (value: string | undefined, label: string) => {
-    if (tenant && value) return <span className={styles.filledValue}>{value}</span>;
-    return <span className={styles.placeholder}>{`{{${label}}}`}</span>;
+  const openMasterEditor = () => {
+    if (!masterTemplate) {
+      showToast('Modelo mestre não encontrado.');
+      return;
+    }
+    setEditorHtml(masterTemplate.template_body);
+    setOriginalHtml(masterTemplate.template_body);
+    setEditMode(true);
+    setView('master');
   };
 
-  const rentFormatted = tenant ? tenant.rent_amount.toFixed(2).replace('.', ',') : undefined;
-  const rentExtenso = tenant ? formatRentExtended(tenant.rent_amount) : undefined;
-  const prazo = tenant ? `${monthsBetween(tenant.contract_start, tenant.contract_end)} meses` : undefined;
+  const openTenantViewer = useCallback(
+    async (tenantId: string) => {
+      const found = tenants.find((t) => t.id === Number(tenantId));
+      if (!found) return;
+      setTenant(found);
+      setSelectedTenantId(tenantId);
+      setEditMode(false);
+      setView('tenant');
+      setBusy(true);
+      try {
+        const list = await apiGet<{ items: DocumentItem[] }>(`/api/documents?tenant_id=${found.id}`);
+        const existingMeta = (list.items || []).find((d) => d.document_type === 'rental_contract');
+        if (existingMeta) {
+          const full = await apiGet<DocumentItem>(`/api/documents/${existingMeta.id}`);
+          setTenantDoc(full);
+          setEditorHtml(full.content_html || '');
+          setOriginalHtml(full.content_html || '');
+        } else {
+          setTenantDoc(null);
+          const tpl = masterTemplate?.template_body || '';
+          const placeholders = buildContractPlaceholders(found);
+          const filled = applyPlaceholders(tpl, placeholders);
+          setEditorHtml(filled);
+          setOriginalHtml(filled);
+        }
+      } catch {
+        showToast('Falha ao carregar contrato.');
+      } finally {
+        setBusy(false);
+      }
+    },
+    [tenants, masterTemplate, showToast],
+  );
 
-  const isTemplate = !tenant;
-  const pageTitle = isTemplate ? 'Modelo de Contrato' : `Contrato — ${tenant.full_name}`;
+  const dirty = editorHtml !== originalHtml;
 
-  return (
-    <div className={styles.container}>
-      {/* TOOLBAR */}
-      <div className={styles.toolbar}>
-        <Link href={tenantId ? '/tenants' : '/documents'} className={styles.backBtn}>
-          <ArrowLeft size={16} /> Voltar
-        </Link>
-        <span className={styles.toolbarTitle}>{pageTitle}</span>
-        <span className={styles.toolbarBadge}>{isTemplate ? 'Modelo' : 'Preenchido'}</span>
-        <div className={styles.toolbarSpacer} />
+  const saveMasterTemplate = async () => {
+    if (!masterTemplate || !dirty) return;
+    setBusy(true);
+    try {
+      await apiPut(`/api/document-templates/${masterTemplate.id}`, {
+        name: masterTemplate.name,
+        document_type: masterTemplate.document_type,
+        template_body: editorHtml,
+      });
+      setMasterTemplate({ ...masterTemplate, template_body: editorHtml });
+      setOriginalHtml(editorHtml);
+      showToast('Modelo salvo com sucesso!');
+    } catch {
+      showToast('Falha ao salvar modelo.');
+    } finally {
+      setBusy(false);
+    }
+  };
 
-        <div className={styles.toolbarGroup}>
-          <div className={styles.zoomGroup}>
-            <button className={styles.zoomBtn} onClick={zoomOut}><ZoomOut size={14} /></button>
-            <span className={styles.zoomLevel}>{zoom}%</span>
-            <button className={styles.zoomBtn} onClick={zoomIn}><ZoomIn size={14} /></button>
-          </div>
-          <button className={styles.toolBtn} onClick={handlePrint}>
-            <Printer size={15} /> Imprimir
+  const generateContract = async () => {
+    if (!tenant) return;
+    setShowConfirmGenerate(false);
+    setBusy(true);
+    try {
+      const res = await apiPost<{ id: number; message: string }>('/api/documents/save', {
+        tenant_id: tenant.id,
+        document_type: 'rental_contract',
+        content_html: editorHtml,
+      });
+      const full = await apiGet<DocumentItem>(`/api/documents/${res.id}`);
+      setTenantDoc(full);
+      setOriginalHtml(full.content_html || '');
+      setEditorHtml(full.content_html || '');
+      await loadAll();
+      showToast('Contrato gerado e protegido!');
+    } catch (err) {
+      const msg = (err as Error).message || '';
+      if (msg.includes('contract_already_exists_for_tenant')) {
+        showToast('Já existe um contrato para este inquilino.');
+      } else {
+        showToast('Falha ao gerar contrato.');
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const updateLockedContract = async () => {
+    if (!tenantDoc || !isRoot || !dirty) return;
+    setBusy(true);
+    try {
+      await apiPut(`/api/documents/${tenantDoc.id}`, { content_html: editorHtml });
+      setOriginalHtml(editorHtml);
+      showToast('Contrato atualizado (root).');
+    } catch {
+      showToast('Falha ao atualizar contrato.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const deleteLockedContract = async () => {
+    if (!tenantDoc || !isRoot) return;
+    setShowConfirmDelete(false);
+    setBusy(true);
+    try {
+      await apiDelete(`/api/documents/${tenantDoc.id}`);
+      setTenantDoc(null);
+      const tpl = masterTemplate?.template_body || '';
+      const placeholders = tenant ? buildContractPlaceholders(tenant) : {};
+      const filled = applyPlaceholders(tpl, placeholders);
+      setEditorHtml(filled);
+      setOriginalHtml(filled);
+      await loadAll();
+      showToast('Contrato excluído.');
+    } catch {
+      showToast('Falha ao excluir contrato.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const goDashboard = () => {
+    if (dirty && !confirm('Você tem alterações não salvas. Deseja descartar?')) return;
+    setView('dashboard');
+    setTenant(null);
+    setTenantDoc(null);
+    setEditorHtml('');
+    setOriginalHtml('');
+    setSelectedTenantId('');
+    setEditMode(false);
+  };
+
+  const execFmt = (cmd: string, arg?: string) => {
+    document.execCommand(cmd, false, arg);
+    contentEditableRef.current?.focus();
+    const html = contentEditableRef.current?.innerHTML || '';
+    setEditorHtml(html);
+  };
+
+  const tenantHasContract = (tenantId: number) =>
+    documents.some((d) => d.tenant_id === tenantId);
+
+  // ─── EDITOR / VIEWER MODE ───
+  if (view === 'master' || view === 'tenant') {
+    const isMaster = view === 'master';
+    const isLockedDoc = !!tenantDoc;
+    const canEdit = isMaster || !isLockedDoc || isRoot;
+    const isEditing = editMode && canEdit;
+
+    let title = 'Modelo de Contrato';
+    if (view === 'tenant' && tenant) title = `Contrato — ${tenant.full_name}`;
+    const badge = isMaster ? 'Modelo Mestre' : isLockedDoc ? 'Gerado' : 'Pré-visualização';
+
+    return (
+      <div className={styles.container}>
+        {/* ── MAIN TOOLBAR ── */}
+        <div className={styles.toolbar}>
+          <button className={styles.backBtn} onClick={goDashboard}>
+            <ArrowLeft size={16} /> Voltar
           </button>
-          <button className={styles.toolBtnPrimary} onClick={() => void handleDownloadPDF()}>
-            <Download size={15} /> Baixar PDF
+          <span className={styles.toolbarTitle}>{title}</span>
+          <span className={styles.toolbarBadge}>{badge}</span>
+
+          {isLockedDoc && (
+            <span className={styles.lockBadge} title={isRoot ? 'Admin root pode editar/excluir' : 'Contrato vinculado ao inquilino'}>
+              <Lock size={12} />
+              {isRoot ? 'Root' : 'Protegido'}
+            </span>
+          )}
+          {dirty && <span className={styles.dirtyBadge}><AlertTriangle size={12} /> Não salvo</span>}
+
+          <div className={styles.toolbarSpacer} />
+
+          {/* Edit toggle */}
+          {canEdit && !isEditing && (
+            <button className={styles.toolBtn} onClick={() => setEditMode(true)}>
+              <Pencil size={15} /> Editar
+            </button>
+          )}
+          {isEditing && (
+            <button className={styles.toolBtn} onClick={() => setEditMode(false)}>
+              <Eye size={15} /> Visualizar
+            </button>
+          )}
+
+          {/* Save / Generate */}
+          {isEditing && isMaster && (
+            <button className={styles.toolBtnPrimary} onClick={() => void saveMasterTemplate()} disabled={!dirty || busy}>
+              <Save size={15} /> Salvar Modelo
+            </button>
+          )}
+          {isEditing && view === 'tenant' && !isLockedDoc && (
+            <button className={styles.toolBtnPrimary} onClick={() => setShowConfirmGenerate(true)} disabled={!tenant || busy}>
+              <FileText size={15} /> Gerar Contrato
+            </button>
+          )}
+          {isEditing && view === 'tenant' && isLockedDoc && isRoot && (
+            <>
+              <button className={styles.toolBtnPrimary} onClick={() => void updateLockedContract()} disabled={!dirty || busy}>
+                <Save size={15} /> Salvar Edição
+              </button>
+              <button className={styles.toolBtnDanger} onClick={() => setShowConfirmDelete(true)} disabled={busy}>
+                <Trash2 size={15} /> Excluir
+              </button>
+            </>
+          )}
+
+          <div className={styles.toolbarGroup}>
+            <div className={styles.zoomGroup}>
+              <button className={styles.zoomBtn} onClick={zoomOut}><ZoomOut size={14} /></button>
+              <span className={styles.zoomLevel}>{zoom}%</span>
+              <button className={styles.zoomBtn} onClick={zoomIn}><ZoomIn size={14} /></button>
+            </div>
+            <button className={styles.toolBtn} onClick={handlePrint}><Printer size={15} /> Imprimir</button>
+            <button className={styles.toolBtn} onClick={() => void handleDownloadPDF()}><Download size={15} /> PDF</button>
+          </div>
+        </div>
+
+        {/* ── FORMAT BAR (only when editing, outside the document paper) ── */}
+        {isEditing && (
+          <div className={styles.formatBar}>
+            <button className={styles.fmtBtn} onMouseDown={(e) => { e.preventDefault(); execFmt('bold'); }} title="Negrito"><Bold size={14} /></button>
+            <button className={styles.fmtBtn} onMouseDown={(e) => { e.preventDefault(); execFmt('italic'); }} title="Itálico"><Italic size={14} /></button>
+            <button className={styles.fmtBtn} onMouseDown={(e) => { e.preventDefault(); execFmt('underline'); }} title="Sublinhado"><Underline size={14} /></button>
+            <span className={styles.fmtSep} />
+            <button className={styles.fmtBtn} onMouseDown={(e) => { e.preventDefault(); execFmt('insertUnorderedList'); }} title="Lista"><List size={14} /></button>
+            <button className={styles.fmtBtn} onMouseDown={(e) => { e.preventDefault(); execFmt('insertOrderedList'); }} title="Lista numerada"><ListOrdered size={14} /></button>
+            <span className={styles.fmtSep} />
+            <button className={styles.fmtBtn} onMouseDown={(e) => { e.preventDefault(); execFmt('justifyLeft'); }} title="Esquerda"><AlignLeft size={14} /></button>
+            <button className={styles.fmtBtn} onMouseDown={(e) => { e.preventDefault(); execFmt('justifyCenter'); }} title="Centralizar"><AlignCenter size={14} /></button>
+            <button className={styles.fmtBtn} onMouseDown={(e) => { e.preventDefault(); execFmt('justifyRight'); }} title="Direita"><AlignRight size={14} /></button>
+            <span className={styles.fmtSep} />
+            <button className={styles.fmtBtn} onMouseDown={(e) => { e.preventDefault(); execFmt('formatBlock', 'H2'); }} title="Título" style={{ fontWeight: 700, fontSize: 12 }}>H2</button>
+            <button className={styles.fmtBtn} onMouseDown={(e) => { e.preventDefault(); execFmt('formatBlock', 'P'); }} title="Parágrafo" style={{ fontWeight: 600, fontSize: 12 }}>P</button>
+          </div>
+        )}
+
+        {/* ── VIEWER ── */}
+        <div className={styles.viewer}>
+          {loading || busy ? (
+            <div className={styles.loadingState}>Carregando…</div>
+          ) : (
+            <div className={styles.documentWrapper} style={{ transform: `scale(${zoom / 100})` }}>
+              <div className={styles.document} ref={docRef}>
+                {isEditing ? (
+                  <div
+                    ref={contentEditableRef}
+                    className="oc-document-body"
+                    contentEditable
+                    suppressContentEditableWarning
+                    onInput={() => setEditorHtml(contentEditableRef.current?.innerHTML || '')}
+                    style={{ outline: 'none', minHeight: 800 }}
+                  />
+                ) : (
+                  <div
+                    className="oc-document-body"
+                    dangerouslySetInnerHTML={{ __html: editorHtml }}
+                  />
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Confirm generate modal */}
+        {showConfirmGenerate && (
+          <div className={styles.modalBackdrop} onClick={() => setShowConfirmGenerate(false)}>
+            <div className={styles.modal} onClick={(e) => e.stopPropagation()}>
+              <button
+                className={styles.modalClose}
+                onClick={() => setShowConfirmGenerate(false)}
+                aria-label="Fechar"
+              >
+                <X size={18} />
+              </button>
+              <div className={styles.modalIcon}>
+                <AlertTriangle size={28} />
+              </div>
+              <h3 className={styles.modalTitle}>Confirmar geração de contrato</h3>
+              <p className={styles.modalText}>
+                Após gerar o contrato o mesmo não poderá mais ser modificado, exceto pelo administrador root.
+              </p>
+              <p className={styles.modalSubtext}>
+                Inquilino: <strong>{tenant?.full_name}</strong>
+              </p>
+              <div className={styles.modalActions}>
+                <button className={styles.modalBtnCancel} onClick={() => setShowConfirmGenerate(false)}>
+                  Cancelar
+                </button>
+                <button className={styles.modalBtnConfirm} onClick={() => void generateContract()}>
+                  <CheckCircle2 size={16} /> Gerar e Proteger
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Confirm delete modal */}
+        {showConfirmDelete && (
+          <div className={styles.modalBackdrop} onClick={() => setShowConfirmDelete(false)}>
+            <div className={styles.modal} onClick={(e) => e.stopPropagation()}>
+              <button
+                className={styles.modalClose}
+                onClick={() => setShowConfirmDelete(false)}
+                aria-label="Fechar"
+              >
+                <X size={18} />
+              </button>
+              <div className={`${styles.modalIcon} ${styles.modalIconDanger}`}>
+                <Trash2 size={28} />
+              </div>
+              <h3 className={styles.modalTitle}>Excluir contrato?</h3>
+              <p className={styles.modalText}>
+                Esta ação removerá permanentemente o contrato gerado para{' '}
+                <strong>{tenant?.full_name}</strong>. O inquilino poderá receber um novo contrato em seguida.
+              </p>
+              <div className={styles.modalActions}>
+                <button className={styles.modalBtnCancel} onClick={() => setShowConfirmDelete(false)}>
+                  Cancelar
+                </button>
+                <button className={styles.modalBtnDanger} onClick={() => void deleteLockedContract()}>
+                  <Trash2 size={16} /> Excluir
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {toast && (
+          <div className={styles.toast}>
+            <FileText size={16} /> {toast}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // ─── DASHBOARD VIEW ───
+  return (
+    <div className={styles.dashContainer}>
+      <header className={styles.dashHeader}>
+        <div className={styles.dashHeaderLeft}>
+          <Link href="/documents" className={styles.backBtn}>
+            <ArrowLeft size={16} /> Documentos
+          </Link>
+          <div>
+            <h2 className={styles.dashTitle}>Contratos de Locação</h2>
+            <p className={styles.dashDesc}>
+              Edite o modelo mestre e gere contratos protegidos para cada inquilino.
+            </p>
+          </div>
+        </div>
+      </header>
+
+      {/* STATS */}
+      <div className={styles.statsRow}>
+        <div className={styles.statCard}>
+          <div className={`${styles.statIcon} ${styles.statIconTenants}`}><Users size={20} /></div>
+          <div>
+            <div className={styles.statValue}>{tenants.length}</div>
+            <div className={styles.statLabel}>Inquilinos ativos</div>
+          </div>
+        </div>
+        <div className={styles.statCard}>
+          <div className={`${styles.statIcon} ${styles.statIconDocs}`}><FileText size={20} /></div>
+          <div>
+            <div className={styles.statValue}>{documents.length}</div>
+            <div className={styles.statLabel}>Contratos gerados</div>
+          </div>
+        </div>
+        {expiringContracts > 0 && (
+          <div className={styles.statCard}>
+            <div className={`${styles.statIcon} ${styles.statIconWarning}`}><Clock size={20} /></div>
+            <div>
+              <div className={styles.statValue}>{expiringContracts}</div>
+              <div className={styles.statLabel}>Vencendo em 30 dias</div>
+            </div>
+          </div>
+        )}
+        <div className={styles.statCard}>
+          <div className={`${styles.statIcon} ${styles.statIconLock}`}><Shield size={20} /></div>
+          <div>
+            <div className={styles.statValue}>{isRoot ? 'Root' : 'Padrão'}</div>
+            <div className={styles.statLabel}>{isRoot ? 'Edição liberada' : 'Contratos protegidos'}</div>
+          </div>
+        </div>
+      </div>
+
+      {/* ACTIONS GRID */}
+      <div className={styles.actionsGrid}>
+        <button className={styles.actionCard} onClick={openMasterEditor}>
+          <div className={`${styles.actionIcon} ${styles.actionIconTemplate}`}>
+            <Pencil size={24} />
+          </div>
+          <h3 className={styles.actionTitle}>Editar Modelo Mestre</h3>
+          <p className={styles.actionDesc}>
+            Visualize e edite o modelo de contrato usado para gerar todos os contratos dos inquilinos.
+          </p>
+        </button>
+
+        <div className={styles.generateCard}>
+          <h3 className={styles.generateTitle}>Gerar Contrato para Inquilino</h3>
+          <p className={styles.generateDesc}>
+            Selecione um inquilino para preencher o modelo automaticamente.
+          </p>
+          <select
+            className={styles.select}
+            value={selectedTenantId}
+            onChange={(e) => setSelectedTenantId(e.target.value)}
+          >
+            <option value="">Selecione o inquilino…</option>
+            {tenants.map((t) => (
+              <option key={t.id} value={String(t.id)}>
+                {t.full_name} {t.unit_number ? `— Un. ${t.unit_number}` : ''}
+                {tenantHasContract(t.id) ? ' (contrato existente)' : ''}
+              </option>
+            ))}
+          </select>
+          <button
+            className={styles.generateBtn}
+            disabled={!selectedTenantId}
+            onClick={() => void openTenantViewer(selectedTenantId)}
+          >
+            <Eye size={18} />
+            Abrir Editor
           </button>
         </div>
       </div>
 
-      {/* VIEWER */}
-      <div className={styles.viewer}>
-        {loading ? (
-          <div className={styles.loadingState}>Carregando dados do inquilino...</div>
-        ) : (
-          <div className={styles.documentWrapper} ref={wrapperRef} style={{ transform: `scale(${zoom / 100})` }}>
-            <div className={styles.document} ref={docRef}>
+      {/* TENANTS WITH CONTRACTS */}
+      <div className={styles.tenantsSection}>
+        <h3 className={styles.sectionTitle}>Inquilinos e Contratos</h3>
+        <div className={styles.tenantsList}>
+          {tenants.map((t) => {
+            const daysLeft = t.contract_end
+              ? Math.round((new Date(t.contract_end).getTime() - Date.now()) / (1000 * 60 * 60 * 24))
+              : null;
+            const isExpiring = daysLeft !== null && daysLeft >= 0 && daysLeft <= 30;
+            const isExpired = daysLeft !== null && daysLeft < 0;
+            const hasContract = tenantHasContract(t.id);
 
-              <div className={styles.docTitle}>CONTRATO DE LOCAÇÃO DE IMÓVEL RESIDENCIAL</div>
-
-              {/* LOCADOR */}
-              <div className={styles.partyBox}>
-                <span className={styles.partyLabel}>LOCADOR</span>
-                <p>
-                  <strong>LOCADOR — ESPÓLIO DE ORLANDO OLIVEIRA COSTA</strong>, neste ato representado por seu
-                  inventariante André Luiz de Oliveira Costa, brasileiro, solteiro, advogado, portador do RG n°
-                  710871 SSP/MS e do CPF n° 601.110.461-49, com endereço profissional na Rua 14 de Julho n°
-                  164, Bairro Santa Dorothéa em Campo Grande/MS.
-                </p>
-              </div>
-
-              {/* LOCATÁRIO */}
-              <div className={styles.partyBox}>
-                <span className={styles.partyLabel}>LOCATÁRIO</span>
-                <p>
-                  <strong>LOCATÁRIO(S)</strong> — {V(tenant?.full_name, 'LOCATARIO_NOME')},
-                  RG {V(tenant?.rg, 'LOCATARIO_RG')},
-                  inscrito no CPF sob o n.º {V(tenant?.cpf, 'LOCATARIO_CPF')},{' '}
-                  {V(tenant?.occupation, 'LOCATARIO_PROFISSAO')},
-                  residente e domiciliado na {V(tenant?.reference_address, 'LOCATARIO_ENDERECO')}.
-                </p>
-              </div>
-
-              {/* CLÁUSULA PRIMEIRA */}
-              <div className={styles.clause}>
-                <p>
-                  <span className={styles.clauseTitle}>CLÁUSULA PRIMEIRA — OBJETO DA LOCAÇÃO</span> — Imóvel para uso exclusivamente residencial
-                  pelo morador {V(tenant?.full_name, 'LOCATARIO_NOME')},
-                  consistindo em uma suíte mobiliada,
-                  situado à Av. Eduardo Elias Zahran, nº 438,
-                  Bairro Jardim Paulista em Campo Grande/MS — CEP 79051-485,
-                  contendo cama de casal, geladeira, fogão, guarda-roupas e banheiro com chuveiro elétrico,
-                  para 01 (uma) pessoa(s),
-                  incluso água e energia elétrica, wi-fi em caráter de cortesia.
-                </p>
-                <p><strong>Parágrafo único.</strong></p>
-              </div>
-
-              {/* CLÁUSULA SEGUNDA */}
-              <div className={styles.clause}>
-                <p>
-                  <span className={styles.clauseTitle}>CLÁUSULA SEGUNDA — PRAZO DA LOCAÇÃO</span> — A presente locação tem prazo determinado
-                  de {V(prazo, 'CONTRATO_PRAZO')}{' '}
-                  com início em {V(tenant ? formatDateBR(tenant.contract_start) : undefined, 'CONTRATO_INICIO')}{' '}
-                  a {V(tenant ? formatDateBR(tenant.contract_end) : undefined, 'CONTRATO_FIM')},
-                  findo o qual o imóvel deverá ser devolvido ao LOCADOR, independentemente de aviso ou notificação.
-                </p>
-              </div>
-
-              {/* CLÁUSULA TERCEIRA */}
-              <div className={styles.clause}>
-                <p>
-                  <span className={styles.clauseTitle}>CLÁUSULA TERCEIRA — VALOR DA LOCAÇÃO</span> — O valor do aluguel será de
-                  R$ {V(rentFormatted, 'ALUGUEL_VALOR')}{' '}
-                  ({V(rentExtenso, 'ALUGUEL_EXTENSO')}){' '}
-                  com vencimento todo dia {V(tenant?.due_day?.toString(), 'ALUGUEL_VENCIMENTO')}.
-                </p>
-                <p className={styles.subClause}>
-                  § 1º — O valor do aluguel será reajustado a cada 12 (doze) meses, de acordo com a variação do
-                  índice IGPM/FGV, ou outro índice que vier a substituí-lo.
-                </p>
-                <p className={styles.subClause}>
-                  § 2° — O vencimento do aluguel será todo dia {V(tenant?.due_day?.toString(), 'ALUGUEL_VENCIMENTO')} de cada mês.
-                </p>
-                <p className={styles.subClause}>
-                  § 3° — Ocorrendo atraso o LOCATÁRIO arcará com pagamento de multa de 10%, juros moratórios
-                  de 1% a.m., correção monetária pelo índice IGPM/FGV ou outro índice que vier a substituí-lo.
-                </p>
-                <p className={styles.subClause}>
-                  § 4° — Os pagamentos dos aluguéis e demais encargos deverão ser realizados no seguinte
-                  endereço: Rua 14 de Julho, nº 164, Vila Santa Dorothéa, em Campo Grande/MS, CEP 79004-394,
-                  em horário comercial.
-                </p>
-              </div>
-
-              {/* CONDIÇÕES GERAIS */}
-              <div className={styles.clauseSubtitle}>CONDIÇÕES GERAIS</div>
-
-              {/* CLÁUSULA QUARTA */}
-              <div className={styles.clause}>
-                <p>
-                  <span className={styles.clauseTitle}>CLÁUSULA QUARTA</span> — No término da Locação, o LOCATÁRIO deverá restituir o imóvel ao
-                  LOCADOR, independentemente de qualquer notificação judicial ou extrajudicial, no estado em
-                  que o recebeu, devidamente pintado com material de primeira linha e com todas as portas,
-                  janelas, vidros, fechaduras, piso, forro, instalações elétricas e hidráulicas funcionando
-                  regularmente.
-                </p>
-              </div>
-
-              {/* CLÁUSULA QUINTA */}
-              <div className={styles.clause}>
-                <p>
-                  <span className={styles.clauseTitle}>CLÁUSULA QUINTA</span> — O presente contrato é para moradia exclusiva do LOCATÁRIO, sendo
-                  vedada a ocupação de terceiros, sem a expressa autorização mediante negociação com o
-                  proprietário para estipulação de novo valor adicional a este contrato, bem como declara que
-                  recebe neste momento as Regras de Convivência comunitária anexa a este instrumento, sendo
-                  que o valor constante da cláusula do pagamento é válido para apenas um morador.
-                </p>
-              </div>
-
-              {/* CLÁUSULA SEXTA */}
-              <div className={styles.clause}>
-                <p>
-                  <span className={styles.clauseTitle}>CLÁUSULA SEXTA</span> — Durante a vigência da locação, não poderá o LOCATÁRIO, sem
-                  consentimento por escrito do LOCADOR, ceder, emprestar ou sublocar no todo ou em parte, o
-                  imóvel, objeto deste contrato.
-                </p>
-              </div>
-
-              {/* CLÁUSULA SÉTIMA */}
-              <div className={styles.clause}>
-                <p>
-                  <span className={styles.clauseTitle}>CLÁUSULA SÉTIMA</span> — Deverá o LOCATÁRIO cientificar imediatamente o LOCADOR de
-                  quaisquer documentos de cobrança de tributos ou encargos, bem como quaisquer intimações ou
-                  exigências de autoridades públicas, ainda que dirigidas a ele LOCADOR, sob pena de não o
-                  fazendo ou demorando-se a fazê-lo, responder civil ou criminalmente pelos prejuízos advindos.
-                </p>
-              </div>
-
-              {/* CLÁUSULA OITAVA */}
-              <div className={styles.clause}>
-                <p>
-                  <span className={styles.clauseTitle}>CLÁUSULA OITAVA</span> — Se o LOCADOR necessitar de intervenção de advogado para receber
-                  aluguéis ou encargos, seja de forma extrajudicial ou judicial, pagará o LOCATÁRIO, além das
-                  cominações previstas neste instrumento, os honorários do profissional contratado, na base de
-                  10% (dez por cento) no primeiro caso e 20% (vinte por cento) no segundo caso, sobre o valor
-                  total devido.
-                </p>
-              </div>
-
-              {/* CLÁUSULA NONA */}
-              <div className={styles.clause}>
-                <p>
-                  <span className={styles.clauseTitle}>CLÁUSULA NONA</span> — Expirado o prazo do presente contrato, poderá o mesmo ser renovado em
-                  novas bases, de comum acordo entre as partes. Caso, porém, continue o LOCATÁRIO no imóvel,
-                  sem pactuar a renovação, permanecerão em vigor todas as cláusulas e condições do presente
-                  instrumento até a entrega real e definitiva do imóvel locado, com exceção do valor do aluguel
-                  que será corrigido conforme lei em vigor.
-                </p>
-              </div>
-
-              {/* CLÁUSULA DÉCIMA */}
-              <div className={styles.clause}>
-                <p>
-                  <span className={styles.clauseTitle}>CLÁUSULA DÉCIMA</span> — O presente contrato será resolvido de plano nos casos de incêndio,
-                  vendaval, desapropriação, obras determinadas pela autoridade pública que importem na
-                  impossibilidade de habitação ou utilização do imóvel por mais de 30 (trinta) dias, determinações
-                  judiciais ou quaisquer outros fatos de força maior que impeçam o uso do imóvel locado,
-                  independentemente de notificação ou interpelação e sem conferir ao LOCATÁRIO qualquer
-                  direito de pleitear indenização ao LOCADOR, quando este não houver dado causa, ficando,
-                  entretanto, assegurado a ele o direito de pleitear de terceiros possíveis indenizações.
-                </p>
-              </div>
-
-              {/* CLÁUSULA DÉCIMA PRIMEIRA */}
-              <div className={styles.clause}>
-                <p>
-                  <span className={styles.clauseTitle}>CLÁUSULA DÉCIMA PRIMEIRA</span> — É expressamente vedado ao LOCATÁRIO introduzir no
-                  imóvel quaisquer benfeitorias úteis, necessárias ou voluptuárias sem consentimento expresso
-                  do LOCADOR. Se mesmo sem autorização assim proceder, ditas benfeitorias serão a critério do
-                  LOCADOR consideradas incorporadas ao imóvel e não darão margem à direito de retenção ou
-                  indenização, ou serão desfeitas às custas do LOCATÁRIO.
-                </p>
-                <p className={styles.subClause}>
-                  <strong>Parágrafo único</strong> — Os reparos, os consertos e a manutenção do imóvel, além de serem
-                  efetuados com o consentimento do LOCADOR, deverão ser executados com material de boa
-                  qualidade e mão de obra qualificada, de modo a mantê-lo permanentemente em condições de uso.
-                </p>
-              </div>
-
-              {/* CLÁUSULA DÉCIMA SEGUNDA */}
-              <div className={styles.clause}>
-                <p>
-                  <span className={styles.clauseTitle}>CLÁUSULA DÉCIMA SEGUNDA</span> — Constitui-se em obrigação do LOCATÁRIO manter o imóvel
-                  locado com o mesmo cuidado como se fosse seu. Para tanto, declara havê-lo recebido em
-                  perfeitas condições, conforme o termo de vistoria o qual passará a fazer parte integrante deste
-                  contrato.
-                </p>
-              </div>
-
-              {/* CLÁUSULA DÉCIMA TERCEIRA */}
-              <div className={styles.clause}>
-                <p>
-                  <span className={styles.clauseTitle}>CLÁUSULA DÉCIMA TERCEIRA</span> — O LOCATÁRIO não poderá sob qualquer pretexto impedir
-                  a visita periódica do LOCADOR com o fim de vistoriar o seu bom uso e zelo.
-                </p>
-              </div>
-
-              {/* CLÁUSULA DÉCIMA QUARTA */}
-              <div className={styles.clause}>
-                <p>
-                  <span className={styles.clauseTitle}>CLÁUSULA DÉCIMA QUARTA</span> — Assume o LOCATÁRIO o formal compromisso de comunicar
-                  expressamente o interesse em desocupar o imóvel 30 (trinta) dias antes da efetiva desocupação,
-                  devendo ainda solicitar ao LOCADOR que faça uma vistoria no imóvel, a fim de constatar o seu
-                  estado de conservação, sob pena de arcar com mais uma mensalidade da locação.
-                </p>
-              </div>
-
-              {/* CLÁUSULA DÉCIMA QUINTA */}
-              <div className={styles.clause}>
-                <p>
-                  <span className={styles.clauseTitle}>CLÁUSULA DÉCIMA QUINTA</span> — A efetiva devolução do imóvel implica em efetiva entrega das
-                  chaves, sendo que para que tenha eficácia, deverá ser feita contrarrecibo, no endereço declinado
-                  no § 4º da Cláusula Terceira.
-                </p>
-              </div>
-
-              {/* CLÁUSULA DÉCIMA SEXTA */}
-              <div className={styles.clause}>
-                <p>
-                  <span className={styles.clauseTitle}>CLÁUSULA DÉCIMA SEXTA</span> — A tolerância do LOCADOR pelo não cumprimento de qualquer
-                  ato ou obrigação que em virtude deste contrato deva ser praticada ou cumprida, não poderá ser
-                  tida como alteração ou novação do contido neste instrumento, sendo convencionado o seu
-                  reconhecimento como mera liberalidade.
-                </p>
-              </div>
-
-              {/* CLÁUSULA DÉCIMA SÉTIMA — High Energy Appliances */}
-              <div className={styles.clause}>
-                <p>
-                  <span className={styles.clauseTitle}>CLÁUSULA DÉCIMA SÉTIMA</span> — É expressamente proibido o uso de aparelhos eletrônicos
-                  de alta consumação energética no imóvel locado, incluindo, mas não se limitando a: fogões e fornos
-                  elétricos ou de indução, ar-condicionado portátil ou fixo, aquecedores elétricos, radiadores,
-                  secadoras de roupa, máquinas de lavar de grande porte, churrasqueiras elétricas, fritadeiras
-                  industriais, e similares. Caso o morador deseje utilizar algum aparelho desta natureza, deverá
-                  comunicar previamente ao LOCADOR para negociação de ajuste contratual e eventual adequação
-                  do valor do aluguel.
-                </p>
-              </div>
-
-              {/* CLÁUSULA DÉCIMA OITAVA — Furniture Repair */}
-              <div className={styles.clause}>
-                <p>
-                  <span className={styles.clauseTitle}>CLÁUSULA DÉCIMA OITAVA</span> — Os móveis e equipamentos fornecidos pelo LOCADOR,
-                  conforme descrito na Cláusula Primeira, serão objeto de manutenção conforme as seguintes condições:
-                </p>
-                <p className={styles.subClause}>
-                  § 1º — Danos decorrentes de <strong>desgaste natural pelo uso regular</strong> serão reparados ou substituídos
-                  pelo LOCADOR, sem custo para o LOCATÁRIO, desde que devidamente comunicados à administração
-                  para avaliação prévia.
-                </p>
-                <p className={styles.subClause}>
-                  § 2º — Danos decorrentes de <strong>mau uso, negligência ou uso indevido</strong> por parte do LOCATÁRIO
-                  serão integralmente custeados pelo mesmo, conforme avaliação da administração. O LOCATÁRIO
-                  será notificado do valor do reparo ou substituição e deverá efetuar o pagamento no prazo de
-                  15 (quinze) dias a partir da notificação.
-                </p>
-                <p className={styles.subClause}>
-                  § 3º — A classificação do tipo de dano (desgaste natural ou mau uso) será de competência
-                  exclusiva da administração, que realizará vistoria técnica e emitirá laudo justificativo quando solicitado.
-                </p>
-              </div>
-
-              {/* CLÁUSULA DÉCIMA NONA — Regimento Interno */}
-              <div className={styles.clause}>
-                <p>
-                  <span className={styles.clauseTitle}>CLÁUSULA DÉCIMA NONA</span> — O LOCATÁRIO declara ter pleno conhecimento e se compromete
-                  a cumprir integralmente o <strong>Regimento Interno</strong> do imóvel, que constitui parte integrante deste contrato
-                  na qualidade de <strong>Anexo I</strong>. O descumprimento das normas do Regimento Interno será considerado
-                  infração contratual, sujeitando o LOCATÁRIO às penalidades previstas neste instrumento.
-                </p>
-                <p className={styles.subClause}>
-                  <strong>Parágrafo único</strong> — O LOCADOR reserva-se o direito de atualizar o Regimento Interno mediante
-                  comunicação prévia de 15 (quinze) dias ao LOCATÁRIO, passando as novas regras a vigorar
-                  automaticamente após este prazo.
-                </p>
-              </div>
-
-              {/* CLÁUSULA VIGÉSIMA — Early Termination */}
-              <div className={styles.clause}>
-                <p>
-                  <span className={styles.clauseTitle}>CLÁUSULA VIGÉSIMA</span> — Caso o LOCATÁRIO deseje desocupar o imóvel antes do término
-                  do contrato, deverá comunicar formalmente à administração com antecedência mínima de
-                  15 (quinze) dias.
-                </p>
-                <p className={styles.subClause}>
-                  § 1º — Sendo a comunicação realizada dentro do prazo estipulado, nenhuma cobrança adicional
-                  será aplicada ao LOCATÁRIO, ficando este responsável apenas pelos aluguéis e encargos devidos
-                  até a data efetiva da desocupação.
-                </p>
-                <p className={styles.subClause}>
-                  § 2º — Caso o LOCATÁRIO desocupe o imóvel sem a devida comunicação prévia de 15 (quinze) dias,
-                  ou abandone o imóvel sem aviso, o ato será considerado <strong>quebra de contrato</strong>, ficando o
-                  LOCATÁRIO obrigado ao pagamento de multa equivalente a <strong>30% (trinta por cento) do valor
-                  total dos aluguéis remanescentes</strong> até o término originalmente previsto do contrato.
-                </p>
-                <p className={styles.subClause}>
-                  § 3º — O valor da multa por quebra de contrato será calculado com base no aluguel vigente
-                  à data da desocupação, multiplicado pelo número de meses restantes e aplicado o percentual
-                  de 30% sobre o montante total.
-                </p>
-              </div>
-
-              {/* CLÁUSULA VIGÉSIMA PRIMEIRA — Penalty */}
-              <div className={styles.clause}>
-                <p>
-                  <span className={styles.clauseTitle}>CLÁUSULA VIGÉSIMA PRIMEIRA</span> — Fica estipulada multa correspondente a 03 (três) aluguéis à
-                  parte que infringir qualquer uma das cláusulas.
-                </p>
-                <p className={styles.subClause}>
-                  <strong>Parágrafo único</strong> — A multa será sempre paga integralmente, seja qual for o tempo decorrido do
-                  presente contrato e não será compensatória de prejuízos e/ou danos causados ao imóvel, nem
-                  poderá ser tida como indenizatória de aluguéis ou encargos devidos.
-                </p>
-              </div>
-
-              {/* SIGNATURES */}
-              <div className={styles.signatures}>
-                <p style={{ textAlign: 'justify', marginBottom: 8 }}>
-                  E por estarem assim, justos e contratados, cientes e de acordo com tudo o quanto neste
-                  instrumento foi lavrado, firmam em formato digital através do WhatsApp.
-                </p>
-
-                <div className={styles.dateLine}>
-                  Campo Grande/MS, {V(tenant ? todayBR() : undefined, 'CONTRATO_DATA')}.
+            return (
+              <button
+                key={t.id}
+                className={styles.tenantRow}
+                onClick={() => void openTenantViewer(String(t.id))}
+              >
+                <div className={styles.tenantInfo}>
+                  <span className={styles.tenantName}>{t.full_name}</span>
+                  <span className={styles.tenantUnit}>
+                    Un. {t.unit_number || '—'} — R$ {t.rent_amount.toFixed(2).replace('.', ',')}
+                  </span>
                 </div>
-
-                <div className={styles.sigRow}>
-                  <div className={styles.sigBlock}>
-                    <div className={styles.sigLine}>
-                      <div className={styles.sigName}>ESPÓLIO DE ORLANDO OLIVEIRA COSTA</div>
-                      <div className={styles.sigRole}>LOCADOR</div>
-                    </div>
-                  </div>
-                  <div className={styles.sigBlock}>
-                    <div className={styles.sigLine}>
-                      <div className={styles.sigName}>{V(tenant?.full_name, 'LOCATARIO_NOME')}</div>
-                      <div className={styles.sigRole}>LOCATÁRIO</div>
-                    </div>
-                  </div>
+                <div className={styles.tenantContract}>
+                  {t.contract_start && t.contract_end ? (
+                    <>
+                      <span className={styles.tenantDates}>
+                        {formatDateBR(t.contract_start)} – {formatDateBR(t.contract_end)}
+                      </span>
+                      <span
+                        className={`${styles.tenantStatus} ${
+                          isExpired
+                            ? styles.statusExpired
+                            : isExpiring
+                              ? styles.statusExpiring
+                              : styles.statusActive
+                        }`}
+                      >
+                        {isExpired ? 'Vencido' : isExpiring ? `${daysLeft}d restantes` : 'Ativo'}
+                      </span>
+                    </>
+                  ) : (
+                    <span className={styles.tenantDates}>Sem prazo definido</span>
+                  )}
                 </div>
-              </div>
-
-            </div>
-          </div>
-        )}
+                {hasContract ? (
+                  <Lock size={14} className={styles.tenantLock} />
+                ) : (
+                  <FileText size={14} className={styles.tenantPending} />
+                )}
+              </button>
+            );
+          })}
+        </div>
       </div>
 
-      {/* TOAST */}
       {toast && (
         <div className={styles.toast}>
           <FileText size={16} /> {toast}
