@@ -18,3 +18,4 @@ frontend/out
 /dumps/
 /generated/
 /tmp/
+frontend/tsconfig.tsbuildinfo
