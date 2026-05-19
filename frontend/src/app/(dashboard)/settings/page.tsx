@@ -46,10 +46,11 @@ const EMPTY_FORM: UserFormState = {
     finance: false,
     documents: false,
     settings: false,
+    clients: false,
   },
 };
 
-const PERMISSION_FIELDS: Array<keyof AuthPermissions> = ['dashboard', 'properties', 'tenants', 'finance', 'documents', 'settings'];
+const PERMISSION_FIELDS: Array<keyof AuthPermissions> = ['dashboard', 'properties', 'tenants', 'finance', 'documents', 'settings', 'clients'];
 
 export default function SettingsPage() {
   const { user } = useAuth();
@@ -292,6 +293,7 @@ export default function SettingsPage() {
                           finance: true,
                           documents: true,
                           settings: true,
+                          clients: true,
                         }
                       : prev.permissions,
                   }))

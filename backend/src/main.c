@@ -13,6 +13,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <arpa/inet.h>
+#include <fcntl.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
@@ -51,6 +52,7 @@ typedef struct {
     pthread_mutex_t db_lock;
     char db_path[512];
     char generated_dir[512];
+    char uploads_dir[512];
 } AppState;
 
 typedef struct {
@@ -66,6 +68,7 @@ typedef struct {
     int can_finance;
     int can_documents;
     int can_settings;
+    int can_clients;
 } AuthUser;
 
 typedef struct {
@@ -84,11 +87,46 @@ static AppState g_app;
 static RateLimitEntry g_pre_register_limits[RATE_LIMIT_SLOTS];
 static RateBucket g_global_buckets[RATE_BUCKET_COUNT];
 static RateBucket g_auth_buckets[RATE_BUCKET_COUNT];
-static char g_cors_origin[256] = "http://localhost:5173";
+static RateBucket g_tenant_ticket_buckets[RATE_BUCKET_COUNT];
+static RateBucket g_tenant_ip_upload_buckets[RATE_BUCKET_COUNT];
+static RateBucket g_complaint_ip_buckets[RATE_BUCKET_COUNT];
+static char g_cors_origin[512] = "http://localhost:5173,http://127.0.0.1:5173";
 static int g_trust_proxy = 0;
 
-static void add_cors_headers(struct MHD_Response *response) {
-    MHD_add_response_header(response, "Access-Control-Allow-Origin", g_cors_origin);
+/* Match request Origin against comma-separated whitelist in g_cors_origin.
+   Returns matched origin or first entry if no match. */
+static const char *select_cors_origin(struct MHD_Connection *connection, char *out, size_t out_len) {
+    const char *req_origin = connection ? MHD_lookup_connection_value(connection, MHD_HEADER_KIND, "Origin") : NULL;
+    const char *list = g_cors_origin;
+    const char *first_end = strchr(list, ',');
+    size_t first_len = first_end ? (size_t)(first_end - list) : strlen(list);
+    if (first_len >= out_len) first_len = out_len - 1;
+    memcpy(out, list, first_len);
+    out[first_len] = '\0';
+    if (!req_origin) return out;
+    const char *p = list;
+    while (*p) {
+        const char *end = strchr(p, ',');
+        size_t len = end ? (size_t)(end - p) : strlen(p);
+        while (len && p[0] == ' ') { p++; len--; }
+        while (len && p[len - 1] == ' ') len--;
+        if (strlen(req_origin) == len && strncmp(req_origin, p, len) == 0) {
+            if (len >= out_len) len = out_len - 1;
+            memcpy(out, p, len);
+            out[len] = '\0';
+            return out;
+        }
+        if (!end) break;
+        p = end + 1;
+    }
+    return out;
+}
+
+static void add_cors_headers(struct MHD_Response *response, struct MHD_Connection *connection) {
+    char origin[256];
+    select_cors_origin(connection, origin, sizeof(origin));
+    MHD_add_response_header(response, "Access-Control-Allow-Origin", origin);
+    MHD_add_response_header(response, "Vary", "Origin");
     MHD_add_response_header(response, "Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
     MHD_add_response_header(response, "Access-Control-Allow-Headers", "Authorization, Content-Type");
     MHD_add_response_header(response, "Access-Control-Max-Age", "86400");
@@ -105,7 +143,7 @@ static int send_response(struct MHD_Connection *connection, int status, const ch
         return MHD_NO;
     }
     MHD_add_response_header(response, "Content-Type", content_type);
-    add_cors_headers(response);
+    add_cors_headers(response, connection);
     int ret = MHD_queue_response(connection, status, response);
     MHD_destroy_response(response);
     return ret;
@@ -148,6 +186,19 @@ static int parse_id_path(const char *url, const char *prefix, int *out_id) {
     if (*end != '\0' || value <= 0 || value > INT_MAX) {
         return 0;
     }
+    *out_id = (int) value;
+    return 1;
+}
+
+/* Like parse_id_path but ID does not need to be at end; stops at '/' or '\0'. */
+static int parse_id_prefix(const char *url, const char *prefix, int *out_id) {
+    size_t n = strlen(prefix);
+    if (strncmp(url, prefix, n) != 0) return 0;
+    const char *p = url + n;
+    if (*p == '\0') return 0;
+    char *end = NULL;
+    long value = strtol(p, &end, 10);
+    if ((*end != '\0' && *end != '/') || value <= 0 || value > INT_MAX) return 0;
     *out_id = (int) value;
     return 1;
 }
@@ -428,6 +479,28 @@ static int ensure_directories(void) {
             return 0;
         }
     }
+    if (stat(g_app.uploads_dir, &st) != 0) {
+        if (mkdir(g_app.uploads_dir, 0700) != 0 && errno != EEXIST) {
+            perror("mkdir uploads");
+            return 0;
+        }
+    }
+    char tickets_dir[600];
+    snprintf(tickets_dir, sizeof(tickets_dir), "%s/tickets", g_app.uploads_dir);
+    if (stat(tickets_dir, &st) != 0) {
+        if (mkdir(tickets_dir, 0700) != 0 && errno != EEXIST) {
+            perror("mkdir uploads/tickets");
+            return 0;
+        }
+    }
+    char complaints_dir[600];
+    snprintf(complaints_dir, sizeof(complaints_dir), "%s/complaints", g_app.uploads_dir);
+    if (stat(complaints_dir, &st) != 0) {
+        if (mkdir(complaints_dir, 0700) != 0 && errno != EEXIST) {
+            perror("mkdir uploads/complaints");
+            return 0;
+        }
+    }
     return 1;
 }
 
@@ -448,6 +521,7 @@ static int init_schema(void) {
         "can_finance INTEGER NOT NULL DEFAULT 1,"
         "can_documents INTEGER NOT NULL DEFAULT 1,"
         "can_settings INTEGER NOT NULL DEFAULT 0,"
+        "can_clients INTEGER NOT NULL DEFAULT 0,"
         "created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP"
         ");"
         "CREATE TABLE IF NOT EXISTS sessions ("
@@ -582,12 +656,76 @@ static int init_schema(void) {
         "message TEXT NOT NULL,"
         "related_id INTEGER,"
         "read_status INTEGER NOT NULL DEFAULT 0,"
+        "recipient_tenant_id INTEGER NOT NULL DEFAULT 0,"
+        "created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP"
+        ");"
+        "CREATE TABLE IF NOT EXISTS tenant_sessions ("
+        "token TEXT PRIMARY KEY,"
+        "tenant_id INTEGER NOT NULL,"
+        "expires_at TEXT NOT NULL,"
+        "created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,"
+        "FOREIGN KEY(tenant_id) REFERENCES tenants(id)"
+        ");"
+        "CREATE TABLE IF NOT EXISTS tickets ("
+        "id INTEGER PRIMARY KEY AUTOINCREMENT,"
+        "tenant_id INTEGER NOT NULL,"
+        "unit_id INTEGER,"
+        "category TEXT NOT NULL,"
+        "subcategory TEXT NOT NULL DEFAULT '',"
+        "description TEXT NOT NULL,"
+        "status TEXT NOT NULL DEFAULT 'open',"
+        "admin_notes TEXT NOT NULL DEFAULT '',"
+        "created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,"
+        "updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,"
+        "FOREIGN KEY(tenant_id) REFERENCES tenants(id),"
+        "FOREIGN KEY(unit_id) REFERENCES units(id)"
+        ");"
+        "CREATE TABLE IF NOT EXISTS ticket_files ("
+        "id INTEGER PRIMARY KEY AUTOINCREMENT,"
+        "ticket_id INTEGER NOT NULL,"
+        "tenant_id INTEGER NOT NULL,"
+        "storage_path TEXT NOT NULL,"
+        "mime_type TEXT NOT NULL,"
+        "file_size INTEGER NOT NULL,"
+        "original_name TEXT NOT NULL DEFAULT '',"
+        "created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,"
+        "FOREIGN KEY(ticket_id) REFERENCES tickets(id) ON DELETE CASCADE"
+        ");"
+        "CREATE TABLE IF NOT EXISTS anonymous_complaints ("
+        "id INTEGER PRIMARY KEY AUTOINCREMENT,"
+        "body TEXT NOT NULL,"
+        "created_ip_hash TEXT NOT NULL DEFAULT '',"
+        "status TEXT NOT NULL DEFAULT 'new',"
+        "admin_notes TEXT NOT NULL DEFAULT '',"
+        "created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP"
+        ");"
+        "CREATE TABLE IF NOT EXISTS complaint_files ("
+        "id INTEGER PRIMARY KEY AUTOINCREMENT,"
+        "complaint_id INTEGER NOT NULL,"
+        "storage_path TEXT NOT NULL,"
+        "mime_type TEXT NOT NULL,"
+        "file_size INTEGER NOT NULL,"
+        "created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,"
+        "FOREIGN KEY(complaint_id) REFERENCES anonymous_complaints(id) ON DELETE CASCADE"
+        ");"
+        "CREATE TABLE IF NOT EXISTS notices ("
+        "id INTEGER PRIMARY KEY AUTOINCREMENT,"
+        "title TEXT NOT NULL,"
+        "body TEXT NOT NULL,"
+        "created_by INTEGER NOT NULL DEFAULT 0,"
+        "active INTEGER NOT NULL DEFAULT 1,"
         "created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP"
         ");"
         "CREATE INDEX IF NOT EXISTS idx_rent_month ON rent_charges(month);"
         "CREATE INDEX IF NOT EXISTS idx_rent_status ON rent_charges(status);"
         "CREATE INDEX IF NOT EXISTS idx_tenant_unit ON tenants(unit_id);"
-        "CREATE INDEX IF NOT EXISTS idx_expense_date ON expenses(expense_date);";
+        "CREATE INDEX IF NOT EXISTS idx_expense_date ON expenses(expense_date);"
+        "CREATE INDEX IF NOT EXISTS idx_tenant_sessions_tenant ON tenant_sessions(tenant_id);"
+        "CREATE INDEX IF NOT EXISTS idx_tickets_tenant ON tickets(tenant_id);"
+        "CREATE INDEX IF NOT EXISTS idx_tickets_status ON tickets(status);"
+        "CREATE INDEX IF NOT EXISTS idx_tickets_category ON tickets(category);"
+        "CREATE INDEX IF NOT EXISTS idx_ticket_files_ticket ON ticket_files(ticket_id);"
+        "CREATE INDEX IF NOT EXISTS idx_complaints_created ON anonymous_complaints(created_at);";
 
     return db_exec(sql);
 }
@@ -772,6 +910,86 @@ static int run_schema_migrations(void) {
     if (table_count("users") > 0 && count_query_int("SELECT COUNT(*) FROM users WHERE is_root=1") == 0) {
         db_exec("UPDATE users SET is_root=1, can_settings=1 WHERE id=(SELECT id FROM users ORDER BY id ASC LIMIT 1)");
     }
+
+    if (!table_has_column("users", "can_clients")) {
+        if (!db_exec("ALTER TABLE users ADD COLUMN can_clients INTEGER NOT NULL DEFAULT 0")) return 0;
+    }
+    if (!table_has_column("tenants", "password_hash")) {
+        if (!db_exec("ALTER TABLE tenants ADD COLUMN password_hash TEXT NOT NULL DEFAULT ''")) return 0;
+    }
+    if (!table_has_column("tenants", "password_set_at")) {
+        if (!db_exec("ALTER TABLE tenants ADD COLUMN password_set_at TEXT")) return 0;
+    }
+    if (!table_has_column("tenants", "portal_last_login")) {
+        if (!db_exec("ALTER TABLE tenants ADD COLUMN portal_last_login TEXT")) return 0;
+    }
+    if (!table_has_column("notifications", "recipient_tenant_id")) {
+        if (!db_exec("ALTER TABLE notifications ADD COLUMN recipient_tenant_id INTEGER NOT NULL DEFAULT 0")) return 0;
+    }
+    db_exec("CREATE TABLE IF NOT EXISTS tenant_sessions ("
+            "token TEXT PRIMARY KEY,"
+            "tenant_id INTEGER NOT NULL,"
+            "expires_at TEXT NOT NULL,"
+            "created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,"
+            "FOREIGN KEY(tenant_id) REFERENCES tenants(id)"
+            ")");
+    db_exec("CREATE TABLE IF NOT EXISTS tickets ("
+            "id INTEGER PRIMARY KEY AUTOINCREMENT,"
+            "tenant_id INTEGER NOT NULL,"
+            "unit_id INTEGER,"
+            "category TEXT NOT NULL,"
+            "subcategory TEXT NOT NULL DEFAULT '',"
+            "description TEXT NOT NULL,"
+            "status TEXT NOT NULL DEFAULT 'open',"
+            "admin_notes TEXT NOT NULL DEFAULT '',"
+            "created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,"
+            "updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,"
+            "FOREIGN KEY(tenant_id) REFERENCES tenants(id),"
+            "FOREIGN KEY(unit_id) REFERENCES units(id)"
+            ")");
+    db_exec("CREATE TABLE IF NOT EXISTS ticket_files ("
+            "id INTEGER PRIMARY KEY AUTOINCREMENT,"
+            "ticket_id INTEGER NOT NULL,"
+            "tenant_id INTEGER NOT NULL,"
+            "storage_path TEXT NOT NULL,"
+            "mime_type TEXT NOT NULL,"
+            "file_size INTEGER NOT NULL,"
+            "original_name TEXT NOT NULL DEFAULT '',"
+            "created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,"
+            "FOREIGN KEY(ticket_id) REFERENCES tickets(id) ON DELETE CASCADE"
+            ")");
+    db_exec("CREATE TABLE IF NOT EXISTS anonymous_complaints ("
+            "id INTEGER PRIMARY KEY AUTOINCREMENT,"
+            "body TEXT NOT NULL,"
+            "created_ip_hash TEXT NOT NULL DEFAULT '',"
+            "status TEXT NOT NULL DEFAULT 'new',"
+            "admin_notes TEXT NOT NULL DEFAULT '',"
+            "created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP"
+            ")");
+    db_exec("CREATE TABLE IF NOT EXISTS complaint_files ("
+            "id INTEGER PRIMARY KEY AUTOINCREMENT,"
+            "complaint_id INTEGER NOT NULL,"
+            "storage_path TEXT NOT NULL,"
+            "mime_type TEXT NOT NULL,"
+            "file_size INTEGER NOT NULL,"
+            "created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,"
+            "FOREIGN KEY(complaint_id) REFERENCES anonymous_complaints(id) ON DELETE CASCADE"
+            ")");
+    db_exec("CREATE TABLE IF NOT EXISTS notices ("
+            "id INTEGER PRIMARY KEY AUTOINCREMENT,"
+            "title TEXT NOT NULL,"
+            "body TEXT NOT NULL,"
+            "created_by INTEGER NOT NULL DEFAULT 0,"
+            "active INTEGER NOT NULL DEFAULT 1,"
+            "created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP"
+            ")");
+    db_exec("CREATE INDEX IF NOT EXISTS idx_tenant_sessions_tenant ON tenant_sessions(tenant_id)");
+    db_exec("CREATE INDEX IF NOT EXISTS idx_tickets_tenant ON tickets(tenant_id)");
+    db_exec("CREATE INDEX IF NOT EXISTS idx_tickets_status ON tickets(status)");
+    db_exec("CREATE INDEX IF NOT EXISTS idx_tickets_category ON tickets(category)");
+    db_exec("CREATE INDEX IF NOT EXISTS idx_ticket_files_ticket ON ticket_files(ticket_id)");
+    db_exec("CREATE INDEX IF NOT EXISTS idx_complaints_created ON anonymous_complaints(created_at)");
+    db_exec("CREATE INDEX IF NOT EXISTS idx_notifications_tenant ON notifications(recipient_tenant_id)");
 
     db_exec("UPDATE properties SET total_units=(SELECT COUNT(*) FROM units WHERE property_id=properties.id)");
     return 1;
@@ -1232,7 +1450,8 @@ static int validate_token(const char *token, AuthUser *user) {
     sqlite3_stmt *stmt = NULL;
     const char *sql =
         "SELECT u.id, IFNULL(u.full_name,''), u.email, u.role, u.is_root, u.is_active, "
-        "u.can_dashboard, u.can_properties, u.can_tenants, u.can_finance, u.can_documents, u.can_settings "
+        "u.can_dashboard, u.can_properties, u.can_tenants, u.can_finance, u.can_documents, u.can_settings, "
+        "IFNULL(u.can_clients,0) "
         "FROM sessions s "
         "JOIN users u ON u.id = s.user_id "
         "WHERE s.token = ? AND s.expires_at > datetime('now')";
@@ -1257,6 +1476,7 @@ static int validate_token(const char *token, AuthUser *user) {
         user->can_finance = sqlite3_column_int(stmt, 9);
         user->can_documents = sqlite3_column_int(stmt, 10);
         user->can_settings = sqlite3_column_int(stmt, 11);
+        user->can_clients = sqlite3_column_int(stmt, 12);
         ok = user->is_active == 1;
     }
     sqlite3_finalize(stmt);
@@ -1277,6 +1497,10 @@ static int authenticate_request(struct MHD_Connection *connection, AuthUser *use
 
 static int has_route_access(const AuthUser *user, const char *url) {
     if (!user || user->id <= 0 || user->is_active != 1) {
+        return 0;
+    }
+    /* Admin tokens never grant access to tenant-facing routes */
+    if (starts_with(url, "/api/client/")) {
         return 0;
     }
     if (user->is_root == 1) {
@@ -1304,6 +1528,9 @@ static int has_route_access(const AuthUser *user, const char *url) {
     }
     if (starts_with(url, "/api/documents") || starts_with(url, "/api/document-templates")) {
         return user->can_documents == 1;
+    }
+    if (starts_with(url, "/api/clients/") || strcmp(url, "/api/clients") == 0) {
+        return user->can_clients == 1 || user->is_root == 1;
     }
     return 0;
 }
@@ -4070,7 +4297,7 @@ static int send_pdf_file(struct MHD_Connection *connection, const char *file_pat
     }
     MHD_add_response_header(response, "Content-Type", "application/pdf");
     MHD_add_response_header(response, "Content-Disposition", "attachment; filename=generated.pdf");
-    add_cors_headers(response);
+    add_cors_headers(response, connection);
     int ret = MHD_queue_response(connection, MHD_HTTP_OK, response);
     MHD_destroy_response(response);
     return ret;
@@ -4185,7 +4412,7 @@ static int handle_export_financial_csv(struct MHD_Connection *connection, const 
     }
     MHD_add_response_header(response, "Content-Type", "text/csv");
     MHD_add_response_header(response, "Content-Disposition", "attachment; filename=financial_export.csv");
-    add_cors_headers(response);
+    add_cors_headers(response, connection);
     int ret = MHD_queue_response(connection, MHD_HTTP_OK, response);
     MHD_destroy_response(response);
     return ret;
@@ -4240,7 +4467,7 @@ static int handle_export_tax_csv(struct MHD_Connection *connection, const char *
     }
     MHD_add_response_header(response, "Content-Type", "text/csv");
     MHD_add_response_header(response, "Content-Disposition", "attachment; filename=tax_summary.csv");
-    add_cors_headers(response);
+    add_cors_headers(response, connection);
     int ret = MHD_queue_response(connection, MHD_HTTP_OK, response);
     MHD_destroy_response(response);
     return ret;
@@ -4277,6 +4504,1055 @@ static int handle_export_monthly_pdf(struct MHD_Connection *connection, const ch
     return send_pdf_file(connection, path);
 }
 
+/* ═══════════════════════════════════════════════════════════════
+   CLIENT PANEL — HELPERS
+   ═══════════════════════════════════════════════════════════════ */
+
+static int base64_decode_simple(const char *in, unsigned char **out, size_t *out_len) {
+    if (!in) return 0;
+    size_t in_len = strlen(in);
+    if (in_len == 0) { *out = NULL; *out_len = 0; return 1; }
+    size_t max_out = (in_len / 4) * 3 + 4;
+    unsigned char *buf = malloc(max_out);
+    if (!buf) return 0;
+    /* Simple base64 decode table */
+    static const int tbl[256] = {
+        -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+        -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+        -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,62,-1,-1,-1,63,
+        52,53,54,55,56,57,58,59,60,61,-1,-1,-1,-1,-1,-1,
+        -1, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9,10,11,12,13,14,
+        15,16,17,18,19,20,21,22,23,24,25,-1,-1,-1,-1,-1,
+        -1,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,
+        41,42,43,44,45,46,47,48,49,50,51,-1,-1,-1,-1,-1,
+        -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+        -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+        -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+        -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+        -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+        -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+        -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+        -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1
+    };
+    size_t i = 0, j = 0;
+    while (i + 3 < in_len) {
+        int a = tbl[(unsigned char)in[i]], b = tbl[(unsigned char)in[i+1]],
+            c = tbl[(unsigned char)in[i+2]], d = tbl[(unsigned char)in[i+3]];
+        if (a < 0 || b < 0) break;
+        buf[j++] = (unsigned char)((a << 2) | (b >> 4));
+        if (in[i+2] != '=' && c >= 0) buf[j++] = (unsigned char)((b << 4) | (c >> 2));
+        if (in[i+3] != '=' && d >= 0) buf[j++] = (unsigned char)((c << 6) | d);
+        i += 4;
+    }
+    *out = buf;
+    *out_len = j;
+    return 1;
+}
+
+static const char* detect_mime_from_magic(const unsigned char *buf, size_t len) {
+    if (len < 4) return NULL;
+    if (buf[0] == 0xFF && buf[1] == 0xD8 && buf[2] == 0xFF) return "image/jpeg";
+    if (buf[0] == 0x89 && buf[1] == 0x50 && buf[2] == 0x4E && buf[3] == 0x47) return "image/png";
+    if (len >= 12 && memcmp(buf, "RIFF", 4) == 0 && memcmp(buf + 8, "WEBP", 4) == 0) return "image/webp";
+    if (len >= 8 && memcmp(buf + 4, "ftyp", 4) == 0) return "video/mp4";
+    return NULL;
+}
+
+static const char* mime_to_ext(const char *mime) {
+    if (strcmp(mime, "image/jpeg") == 0) return "jpg";
+    if (strcmp(mime, "image/png") == 0) return "png";
+    if (strcmp(mime, "image/webp") == 0) return "webp";
+    if (strcmp(mime, "video/mp4") == 0) return "mp4";
+    return "bin";
+}
+
+static int save_upload_file(const unsigned char *data, size_t len, const char *dir, const char *ext, char out_path[600]) {
+    unsigned char rnd[16];
+    if (!secure_random_bytes(rnd, 16)) return 0;
+    char hex[33];
+    for (int i = 0; i < 16; i++) snprintf(hex + i*2, 3, "%02x", rnd[i]);
+    snprintf(out_path, 600, "%s/%s.%s", dir, hex, ext);
+    FILE *f = fopen(out_path, "wb");
+    if (!f) return 0;
+    size_t written = fwrite(data, 1, len, f);
+    fclose(f);
+    if (written != len) { unlink(out_path); return 0; }
+    chmod(out_path, 0600);
+    return 1;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   CLIENT PANEL — TENANT AUTH
+   ═══════════════════════════════════════════════════════════════ */
+
+typedef struct {
+    int id;
+    char full_name[USER_NAME_LEN];
+    char email[EMAIL_LEN];
+    int unit_id;
+} TenantSubject;
+
+static int validate_tenant_token(const char *token, TenantSubject *t) {
+    sqlite3_stmt *stmt = NULL;
+    const char *sql =
+        "SELECT t.id, IFNULL(t.full_name,''), t.email, IFNULL(t.unit_id,0) "
+        "FROM tenant_sessions s "
+        "JOIN tenants t ON t.id = s.tenant_id "
+        "WHERE s.token = ? AND s.expires_at > datetime('now') AND t.active = 1";
+    if (sqlite3_prepare_v2(g_app.db, sql, -1, &stmt, NULL) != SQLITE_OK) return 0;
+    sqlite3_bind_text(stmt, 1, token, -1, SQLITE_TRANSIENT);
+    int ok = 0;
+    if (sqlite3_step(stmt) == SQLITE_ROW) {
+        t->id = sqlite3_column_int(stmt, 0);
+        snprintf(t->full_name, USER_NAME_LEN, "%s", (const char*)sqlite3_column_text(stmt, 1));
+        snprintf(t->email, EMAIL_LEN, "%s", (const char*)sqlite3_column_text(stmt, 2));
+        t->unit_id = sqlite3_column_int(stmt, 3);
+        ok = 1;
+    }
+    sqlite3_finalize(stmt);
+    return ok;
+}
+
+static int authenticate_client_request(struct MHD_Connection *connection, TenantSubject *t) {
+    const char *auth = MHD_lookup_connection_value(connection, MHD_HEADER_KIND, "Authorization");
+    if (!auth || !starts_with(auth, "Bearer ")) return 0;
+    const char *token = auth + 7;
+    if (strlen(token) < 16) return 0;
+    return validate_tenant_token(token, t);
+}
+
+static int has_client_route_access(const char *url) {
+    if (starts_with(url, "/api/client/auth/")) return 1;
+    if (starts_with(url, "/api/client/dashboard")) return 1;
+    if (starts_with(url, "/api/client/contract")) return 1;
+    if (starts_with(url, "/api/client/files/")) return 1;
+    if (starts_with(url, "/api/client/tickets")) return 1;
+    if (starts_with(url, "/api/client/complaints")) return 1;
+    if (starts_with(url, "/api/client/notices")) return 1;
+    if (starts_with(url, "/api/client/notifications")) return 1;
+    if (starts_with(url, "/api/client/profile")) return 1;
+    return 0;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   CLIENT PANEL — TENANT-FACING HANDLERS
+   ═══════════════════════════════════════════════════════════════ */
+
+static int handle_client_login(struct MHD_Connection *connection, const char *body) {
+    cJSON *root = cJSON_Parse(body);
+    if (!root) return send_error(connection, MHD_HTTP_BAD_REQUEST, "invalid_json");
+    const cJSON *j_email = cJSON_GetObjectItem(root, "email");
+    const cJSON *j_password = cJSON_GetObjectItem(root, "password");
+    if (!cJSON_IsString(j_email) || !cJSON_IsString(j_password)) {
+        cJSON_Delete(root);
+        return send_error(connection, MHD_HTTP_BAD_REQUEST, "missing_fields");
+    }
+    char email[EMAIL_LEN]; char pw_hash[65];
+    snprintf(email, EMAIL_LEN, "%s", j_email->valuestring);
+    hash_password(j_password->valuestring, pw_hash);
+    cJSON_Delete(root);
+
+    sqlite3_stmt *stmt = NULL;
+    if (sqlite3_prepare_v2(g_app.db,
+        "SELECT id, full_name, email, IFNULL(unit_id,0) FROM tenants "
+        "WHERE email=? AND password_hash=? AND active=1", -1, &stmt, NULL) != SQLITE_OK)
+        return send_error(connection, MHD_HTTP_INTERNAL_SERVER_ERROR, "db_error");
+    sqlite3_bind_text(stmt, 1, email, -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 2, pw_hash, -1, SQLITE_TRANSIENT);
+
+    TenantSubject t = {0};
+    int found = 0;
+    if (sqlite3_step(stmt) == SQLITE_ROW) {
+        t.id = sqlite3_column_int(stmt, 0);
+        snprintf(t.full_name, USER_NAME_LEN, "%s", (const char*)sqlite3_column_text(stmt, 1));
+        snprintf(t.email, EMAIL_LEN, "%s", (const char*)sqlite3_column_text(stmt, 2));
+        t.unit_id = sqlite3_column_int(stmt, 3);
+        found = 1;
+    }
+    sqlite3_finalize(stmt);
+
+    if (!found) return send_error(connection, MHD_HTTP_UNAUTHORIZED, "invalid_credentials");
+
+    /* Purge old sessions */
+    db_exec_fmt("DELETE FROM tenant_sessions WHERE tenant_id=%d", t.id);
+
+    char token[TOKEN_LEN + 1];
+    generate_token(token);
+    if (!db_exec_fmt(
+        "INSERT INTO tenant_sessions(token,tenant_id,expires_at) "
+        "VALUES('%q', %d, datetime('now','+%d hours'))",
+        token, t.id, TOKEN_TTL_HOURS))
+        return send_error(connection, MHD_HTTP_INTERNAL_SERVER_ERROR, "session_error");
+
+    db_exec_fmt("UPDATE tenants SET portal_last_login=datetime('now') WHERE id=%d", t.id);
+
+    cJSON *resp = cJSON_CreateObject();
+    cJSON_AddStringToObject(resp, "token", token);
+    cJSON_AddStringToObject(resp, "token_type", "Bearer");
+    cJSON_AddNumberToObject(resp, "expires_in_hours", TOKEN_TTL_HOURS);
+    cJSON *user_obj = cJSON_AddObjectToObject(resp, "user");
+    cJSON_AddNumberToObject(user_obj, "id", t.id);
+    cJSON_AddStringToObject(user_obj, "full_name", t.full_name);
+    cJSON_AddStringToObject(user_obj, "email", t.email);
+    cJSON_AddNumberToObject(user_obj, "unit_id", t.unit_id);
+    int ret = send_json(connection, MHD_HTTP_OK, resp);
+    cJSON_Delete(resp);
+    return ret;
+}
+
+static int handle_client_logout(struct MHD_Connection *connection, struct MHD_Connection *_conn, const char *auth_header) {
+    (void)_conn;
+    if (auth_header && starts_with(auth_header, "Bearer ")) {
+        const char *token = auth_header + 7;
+        db_exec_fmt("DELETE FROM tenant_sessions WHERE token='%q'", token);
+    }
+    cJSON *j = cJSON_CreateObject();
+    cJSON_AddStringToObject(j, "message", "logged_out");
+    int ret = send_json(connection, MHD_HTTP_OK, j);
+    cJSON_Delete(j);
+    return ret;
+}
+
+static int handle_client_me(struct MHD_Connection *connection, const TenantSubject *t) {
+    cJSON *resp = cJSON_CreateObject();
+    cJSON_AddNumberToObject(resp, "id", t->id);
+    cJSON_AddStringToObject(resp, "full_name", t->full_name);
+    cJSON_AddStringToObject(resp, "email", t->email);
+    cJSON_AddNumberToObject(resp, "unit_id", t->unit_id);
+    int ret = send_json(connection, MHD_HTTP_OK, resp);
+    cJSON_Delete(resp);
+    return ret;
+}
+
+static int handle_client_change_password(struct MHD_Connection *connection, const TenantSubject *t, const char *body) {
+    cJSON *root = cJSON_Parse(body);
+    if (!root) return send_error(connection, MHD_HTTP_BAD_REQUEST, "invalid_json");
+    const cJSON *j_cur = cJSON_GetObjectItem(root, "current_password");
+    const cJSON *j_new = cJSON_GetObjectItem(root, "new_password");
+    if (!cJSON_IsString(j_cur) || !cJSON_IsString(j_new)) {
+        cJSON_Delete(root); return send_error(connection, MHD_HTTP_BAD_REQUEST, "missing_fields");
+    }
+    char cur_hash[65], new_hash[65];
+    hash_password(j_cur->valuestring, cur_hash);
+    hash_password(j_new->valuestring, new_hash);
+    cJSON_Delete(root);
+
+    /* Verify current password */
+    sqlite3_stmt *stmt = NULL;
+    sqlite3_prepare_v2(g_app.db, "SELECT 1 FROM tenants WHERE id=? AND password_hash=?", -1, &stmt, NULL);
+    sqlite3_bind_int(stmt, 1, t->id);
+    sqlite3_bind_text(stmt, 2, cur_hash, -1, SQLITE_TRANSIENT);
+    int ok = sqlite3_step(stmt) == SQLITE_ROW;
+    sqlite3_finalize(stmt);
+    if (!ok) return send_error(connection, MHD_HTTP_FORBIDDEN, "wrong_current_password");
+
+    db_exec_fmt("UPDATE tenants SET password_hash='%q', password_set_at=datetime('now') WHERE id=%d", new_hash, t->id);
+
+    cJSON *j = cJSON_CreateObject(); cJSON_AddStringToObject(j, "message", "password_changed");
+    int ret = send_json(connection, MHD_HTTP_OK, j); cJSON_Delete(j);
+    return ret;
+}
+
+static int handle_client_dashboard(struct MHD_Connection *connection, const TenantSubject *t) {
+    /* Unit info */
+    sqlite3_stmt *stmt = NULL;
+    char unit_number[32] = "";
+    double base_rent = 0;
+    if (sqlite3_prepare_v2(g_app.db,
+        "SELECT u.unit_number, u.base_rent FROM units u WHERE u.id=?", -1, &stmt, NULL) == SQLITE_OK) {
+        sqlite3_bind_int(stmt, 1, t->unit_id);
+        if (sqlite3_step(stmt) == SQLITE_ROW) {
+            snprintf(unit_number, 32, "%s", (const char*)sqlite3_column_text(stmt, 0));
+            base_rent = sqlite3_column_double(stmt, 1);
+        }
+    }
+    sqlite3_finalize(stmt);
+
+    /* Tenant contract info */
+    char contract_start[DATE_LEN] = "", contract_end[DATE_LEN] = "", due_day_str[8] = "5";
+    double rent_amount = 0;
+    if (sqlite3_prepare_v2(g_app.db,
+        "SELECT IFNULL(contract_start,''), IFNULL(contract_end,''), rent_amount, due_day FROM tenants WHERE id=?",
+        -1, &stmt, NULL) == SQLITE_OK) {
+        sqlite3_bind_int(stmt, 1, t->id);
+        if (sqlite3_step(stmt) == SQLITE_ROW) {
+            snprintf(contract_start, DATE_LEN, "%s", (const char*)sqlite3_column_text(stmt, 0));
+            snprintf(contract_end, DATE_LEN, "%s", (const char*)sqlite3_column_text(stmt, 1));
+            rent_amount = sqlite3_column_double(stmt, 2);
+            snprintf(due_day_str, 8, "%d", sqlite3_column_int(stmt, 3));
+        }
+    }
+    sqlite3_finalize(stmt);
+
+    /* 6-month payment strip */
+    cJSON *strip = cJSON_CreateArray();
+    if (sqlite3_prepare_v2(g_app.db,
+        "SELECT month, amount, status, IFNULL(paid_at,''), due_date FROM rent_charges "
+        "WHERE tenant_id=? ORDER BY month DESC LIMIT 6",
+        -1, &stmt, NULL) == SQLITE_OK) {
+        sqlite3_bind_int(stmt, 1, t->id);
+        while (sqlite3_step(stmt) == SQLITE_ROW) {
+            cJSON *card = cJSON_CreateObject();
+            cJSON_AddStringToObject(card, "month", (const char*)sqlite3_column_text(stmt, 0));
+            cJSON_AddNumberToObject(card, "amount", sqlite3_column_double(stmt, 1));
+            cJSON_AddStringToObject(card, "status", (const char*)sqlite3_column_text(stmt, 2));
+            cJSON_AddStringToObject(card, "paid_at", (const char*)sqlite3_column_text(stmt, 3));
+            cJSON_AddStringToObject(card, "due_date", (const char*)sqlite3_column_text(stmt, 4));
+            cJSON_AddItemToArray(strip, card);
+        }
+    }
+    sqlite3_finalize(stmt);
+
+    /* Next due — null when nothing unpaid */
+    cJSON *next_due = NULL;
+    if (sqlite3_prepare_v2(g_app.db,
+        "SELECT month, amount, status, due_date FROM rent_charges "
+        "WHERE tenant_id=? AND status IN ('unpaid','overdue') ORDER BY month ASC LIMIT 1",
+        -1, &stmt, NULL) == SQLITE_OK) {
+        sqlite3_bind_int(stmt, 1, t->id);
+        if (sqlite3_step(stmt) == SQLITE_ROW) {
+            next_due = cJSON_CreateObject();
+            cJSON_AddStringToObject(next_due, "month", (const char*)sqlite3_column_text(stmt, 0));
+            cJSON_AddNumberToObject(next_due, "amount", sqlite3_column_double(stmt, 1));
+            cJSON_AddStringToObject(next_due, "status", (const char*)sqlite3_column_text(stmt, 2));
+            cJSON_AddStringToObject(next_due, "due_date", (const char*)sqlite3_column_text(stmt, 3));
+        }
+    }
+    sqlite3_finalize(stmt);
+    if (!next_due) next_due = cJSON_CreateNull();
+
+    /* Open tickets count */
+    int open_tickets = count_query_int(
+        sqlite3_mprintf("SELECT COUNT(*) FROM tickets WHERE tenant_id=%d AND status IN ('open','in_progress')", t->id) ? : "SELECT 0");
+
+    cJSON *resp = cJSON_CreateObject();
+    cJSON *unit_obj = cJSON_AddObjectToObject(resp, "unit");
+    cJSON_AddStringToObject(unit_obj, "unit_number", unit_number);
+    cJSON_AddNumberToObject(unit_obj, "base_rent", base_rent);
+    cJSON_AddNumberToObject(unit_obj, "rent_amount", rent_amount);
+    cJSON_AddStringToObject(unit_obj, "due_day", due_day_str);
+    cJSON *contract_obj = cJSON_AddObjectToObject(resp, "contract");
+    cJSON_AddStringToObject(contract_obj, "start", contract_start);
+    cJSON_AddStringToObject(contract_obj, "end", contract_end);
+    cJSON_AddItemToObject(resp, "next_due", next_due);
+    cJSON_AddItemToObject(resp, "payment_strip", strip);
+    cJSON_AddNumberToObject(resp, "open_tickets", open_tickets);
+
+    int ret = send_json(connection, MHD_HTTP_OK, resp);
+    cJSON_Delete(resp);
+    return ret;
+}
+
+static int handle_client_contract_info(struct MHD_Connection *connection, const TenantSubject *t) {
+    sqlite3_stmt *stmt = NULL;
+    cJSON *resp = cJSON_CreateObject();
+
+    /* Latest contract document */
+    if (sqlite3_prepare_v2(g_app.db,
+        "SELECT id, IFNULL(file_path,''), IFNULL(reference_month,''), generated_at "
+        "FROM documents WHERE tenant_id=? AND document_type LIKE '%contract%' ORDER BY generated_at DESC LIMIT 1",
+        -1, &stmt, NULL) == SQLITE_OK) {
+        sqlite3_bind_int(stmt, 1, t->id);
+        if (sqlite3_step(stmt) == SQLITE_ROW) {
+            cJSON *c = cJSON_AddObjectToObject(resp, "contract");
+            cJSON_AddNumberToObject(c, "id", sqlite3_column_int(stmt, 0));
+            cJSON_AddBoolToObject(c, "available", 1);
+            cJSON_AddStringToObject(c, "generated_at", (const char*)sqlite3_column_text(stmt, 3));
+        } else {
+            cJSON_AddObjectToObject(resp, "contract");
+        }
+    }
+    sqlite3_finalize(stmt);
+
+    /* Last 6 paid months receipts */
+    cJSON *receipts = cJSON_AddArrayToObject(resp, "receipts");
+    if (sqlite3_prepare_v2(g_app.db,
+        "SELECT id, reference_month, generated_at FROM documents "
+        "WHERE tenant_id=? AND document_type LIKE '%receipt%' "
+        "ORDER BY generated_at DESC LIMIT 6",
+        -1, &stmt, NULL) == SQLITE_OK) {
+        sqlite3_bind_int(stmt, 1, t->id);
+        while (sqlite3_step(stmt) == SQLITE_ROW) {
+            cJSON *item = cJSON_CreateObject();
+            cJSON_AddNumberToObject(item, "id", sqlite3_column_int(stmt, 0));
+            cJSON_AddStringToObject(item, "reference_month", (const char*)sqlite3_column_text(stmt, 1));
+            cJSON_AddStringToObject(item, "generated_at", (const char*)sqlite3_column_text(stmt, 2));
+            cJSON_AddItemToArray(receipts, item);
+        }
+    }
+    sqlite3_finalize(stmt);
+
+    int ret = send_json(connection, MHD_HTTP_OK, resp);
+    cJSON_Delete(resp);
+    return ret;
+}
+
+/* Serve a document file — ownership enforced */
+static int handle_client_serve_document(struct MHD_Connection *connection, int doc_id, const TenantSubject *t) {
+    sqlite3_stmt *stmt = NULL;
+    char file_path[600] = "";
+    if (sqlite3_prepare_v2(g_app.db,
+        "SELECT file_path FROM documents WHERE id=? AND tenant_id=?", -1, &stmt, NULL) == SQLITE_OK) {
+        sqlite3_bind_int(stmt, 1, doc_id);
+        sqlite3_bind_int(stmt, 2, t->id);
+        if (sqlite3_step(stmt) == SQLITE_ROW) {
+            snprintf(file_path, 600, "%s", (const char*)sqlite3_column_text(stmt, 0));
+        }
+    }
+    sqlite3_finalize(stmt);
+    if (!file_path[0]) return send_error(connection, MHD_HTTP_NOT_FOUND, "not_found");
+    return send_pdf_file(connection, file_path);
+}
+
+/* Serve a ticket upload file — ownership enforced */
+static int handle_client_serve_ticket_file(struct MHD_Connection *connection, int file_id, const TenantSubject *t) {
+    sqlite3_stmt *stmt = NULL;
+    char storage_path[600] = "", mime_type[64] = "application/octet-stream";
+    if (sqlite3_prepare_v2(g_app.db,
+        "SELECT storage_path, mime_type FROM ticket_files WHERE id=? AND tenant_id=?",
+        -1, &stmt, NULL) == SQLITE_OK) {
+        sqlite3_bind_int(stmt, 1, file_id);
+        sqlite3_bind_int(stmt, 2, t->id);
+        if (sqlite3_step(stmt) == SQLITE_ROW) {
+            snprintf(storage_path, 600, "%s", (const char*)sqlite3_column_text(stmt, 0));
+            snprintf(mime_type, 64, "%s", (const char*)sqlite3_column_text(stmt, 1));
+        }
+    }
+    sqlite3_finalize(stmt);
+    if (!storage_path[0]) return send_error(connection, MHD_HTTP_NOT_FOUND, "not_found");
+    int fd = open(storage_path, O_RDONLY);
+    if (fd < 0) return send_error(connection, MHD_HTTP_NOT_FOUND, "file_not_found");
+    struct stat fst;
+    fstat(fd, &fst);
+    struct MHD_Response *resp = MHD_create_response_from_fd((uint64_t)fst.st_size, fd);
+    if (!resp) { close(fd); return send_error(connection, MHD_HTTP_INTERNAL_SERVER_ERROR, "io_error"); }
+    add_cors_headers(resp, connection);
+    MHD_add_response_header(resp, "Content-Type", mime_type);
+    int ret = MHD_queue_response(connection, MHD_HTTP_OK, resp);
+    MHD_destroy_response(resp);
+    return ret;
+}
+
+static int handle_client_create_ticket(struct MHD_Connection *connection, const TenantSubject *t, const char *body) {
+    cJSON *root = cJSON_Parse(body);
+    if (!root) return send_error(connection, MHD_HTTP_BAD_REQUEST, "invalid_json");
+    const cJSON *j_cat = cJSON_GetObjectItem(root, "category");
+    const cJSON *j_sub = cJSON_GetObjectItem(root, "subcategory");
+    const cJSON *j_desc = cJSON_GetObjectItem(root, "description");
+    const cJSON *j_files = cJSON_GetObjectItem(root, "files");
+    if (!cJSON_IsString(j_cat) || !cJSON_IsString(j_desc) || !cJSON_IsArray(j_files)) {
+        cJSON_Delete(root); return send_error(connection, MHD_HTTP_BAD_REQUEST, "missing_fields");
+    }
+    /* Validate category */
+    const char *cat = j_cat->valuestring;
+    if (strcmp(cat,"moveis") != 0 && strcmp(cat,"eletrica") != 0 &&
+        strcmp(cat,"hidraulica") != 0 && strcmp(cat,"outros") != 0) {
+        cJSON_Delete(root); return send_error(connection, MHD_HTTP_BAD_REQUEST, "invalid_category");
+    }
+    /* Validate description length */
+    if (strlen(j_desc->valuestring) > 256) {
+        cJSON_Delete(root); return send_error(connection, MHD_HTTP_BAD_REQUEST, "description_too_long");
+    }
+    int file_count = cJSON_GetArraySize(j_files);
+    if (file_count < 1 || file_count > 4) {
+        cJSON_Delete(root); return send_error(connection, MHD_HTTP_BAD_REQUEST, "files_count_invalid");
+    }
+    /* Validate at least one image */
+    int has_image = 0;
+    for (int i = 0; i < file_count; i++) {
+        cJSON *f = cJSON_GetArrayItem(j_files, i);
+        const cJSON *jmime = cJSON_GetObjectItem(f, "mime");
+        if (jmime && cJSON_IsString(jmime) && starts_with(jmime->valuestring, "image/")) has_image = 1;
+    }
+    if (!has_image) {
+        cJSON_Delete(root); return send_error(connection, MHD_HTTP_BAD_REQUEST, "image_required");
+    }
+    const char *sub = (j_sub && cJSON_IsString(j_sub)) ? j_sub->valuestring : "";
+    /* Insert ticket */
+    if (!db_exec_fmt(
+        "INSERT INTO tickets(tenant_id,unit_id,category,subcategory,description,status) "
+        "VALUES(%d,%d,'%q','%q','%q','open')",
+        t->id, t->unit_id, cat, sub, j_desc->valuestring))
+    {
+        cJSON_Delete(root); return send_error(connection, MHD_HTTP_INTERNAL_SERVER_ERROR, "db_error");
+    }
+    int ticket_id = (int)sqlite3_last_insert_rowid(g_app.db);
+
+    /* Ensure per-tenant upload dir */
+    char tenant_dir[700];
+    snprintf(tenant_dir, sizeof(tenant_dir), "%s/tickets/%d", g_app.uploads_dir, t->id);
+    struct stat st = {0};
+    if (stat(tenant_dir, &st) != 0) mkdir(tenant_dir, 0700);
+
+    /* Save files */
+    for (int i = 0; i < file_count; i++) {
+        cJSON *f = cJSON_GetArrayItem(j_files, i);
+        const cJSON *jdata = cJSON_GetObjectItem(f, "data_b64");
+        const cJSON *jmime = cJSON_GetObjectItem(f, "mime");
+        const cJSON *jname = cJSON_GetObjectItem(f, "name");
+        if (!cJSON_IsString(jdata) || !cJSON_IsString(jmime)) continue;
+        unsigned char *decoded = NULL; size_t decoded_len = 0;
+        if (!base64_decode_simple(jdata->valuestring, &decoded, &decoded_len)) continue;
+        if (decoded_len == 0 || decoded_len > (size_t)(15 * 1024 * 1024)) { free(decoded); continue; }
+        const char *detected_mime = detect_mime_from_magic(decoded, decoded_len);
+        if (!detected_mime) { free(decoded); continue; }
+        const char *ext = mime_to_ext(detected_mime);
+        char out_path[600];
+        if (!save_upload_file(decoded, decoded_len, tenant_dir, ext, out_path)) { free(decoded); continue; }
+        free(decoded);
+        const char *orig = (jname && cJSON_IsString(jname)) ? jname->valuestring : "";
+        db_exec_fmt(
+            "INSERT INTO ticket_files(ticket_id,tenant_id,storage_path,mime_type,file_size,original_name) "
+            "VALUES(%d,%d,'%q','%q',%lld,'%q')",
+            ticket_id, t->id, out_path, detected_mime, (long long)decoded_len, orig);
+    }
+    cJSON_Delete(root);
+
+    cJSON *resp = cJSON_CreateObject();
+    cJSON_AddNumberToObject(resp, "id", ticket_id);
+    cJSON_AddStringToObject(resp, "status", "open");
+    int ret = send_json(connection, MHD_HTTP_CREATED, resp);
+    cJSON_Delete(resp);
+    return ret;
+}
+
+static int handle_client_get_tickets(struct MHD_Connection *connection, const TenantSubject *t) {
+    sqlite3_stmt *stmt = NULL;
+    cJSON *root = cJSON_CreateObject();
+    cJSON *items = cJSON_AddArrayToObject(root, "tickets");
+    if (sqlite3_prepare_v2(g_app.db,
+        "SELECT id, category, subcategory, description, status, admin_notes, created_at, updated_at "
+        "FROM tickets WHERE tenant_id=? ORDER BY created_at DESC",
+        -1, &stmt, NULL) == SQLITE_OK) {
+        sqlite3_bind_int(stmt, 1, t->id);
+        while (sqlite3_step(stmt) == SQLITE_ROW) {
+            cJSON *item = cJSON_CreateObject();
+            cJSON_AddNumberToObject(item, "id", sqlite3_column_int(stmt, 0));
+            cJSON_AddStringToObject(item, "category", (const char*)sqlite3_column_text(stmt, 1));
+            cJSON_AddStringToObject(item, "subcategory", (const char*)sqlite3_column_text(stmt, 2));
+            cJSON_AddStringToObject(item, "description", (const char*)sqlite3_column_text(stmt, 3));
+            cJSON_AddStringToObject(item, "status", (const char*)sqlite3_column_text(stmt, 4));
+            cJSON_AddStringToObject(item, "admin_notes", (const char*)sqlite3_column_text(stmt, 5));
+            cJSON_AddStringToObject(item, "created_at", (const char*)sqlite3_column_text(stmt, 6));
+            cJSON_AddStringToObject(item, "updated_at", (const char*)sqlite3_column_text(stmt, 7));
+            cJSON_AddItemToArray(items, item);
+        }
+    }
+    sqlite3_finalize(stmt);
+    int ret = send_json(connection, MHD_HTTP_OK, root);
+    cJSON_Delete(root);
+    return ret;
+}
+
+static int handle_client_get_ticket(struct MHD_Connection *connection, int ticket_id, const TenantSubject *t) {
+    sqlite3_stmt *stmt = NULL;
+    cJSON *resp = NULL;
+    if (sqlite3_prepare_v2(g_app.db,
+        "SELECT id, category, subcategory, description, status, admin_notes, created_at, updated_at "
+        "FROM tickets WHERE id=? AND tenant_id=?", -1, &stmt, NULL) == SQLITE_OK) {
+        sqlite3_bind_int(stmt, 1, ticket_id);
+        sqlite3_bind_int(stmt, 2, t->id);
+        if (sqlite3_step(stmt) == SQLITE_ROW) {
+            resp = cJSON_CreateObject();
+            cJSON_AddNumberToObject(resp, "id", sqlite3_column_int(stmt, 0));
+            cJSON_AddStringToObject(resp, "category", (const char*)sqlite3_column_text(stmt, 1));
+            cJSON_AddStringToObject(resp, "subcategory", (const char*)sqlite3_column_text(stmt, 2));
+            cJSON_AddStringToObject(resp, "description", (const char*)sqlite3_column_text(stmt, 3));
+            cJSON_AddStringToObject(resp, "status", (const char*)sqlite3_column_text(stmt, 4));
+            cJSON_AddStringToObject(resp, "admin_notes", (const char*)sqlite3_column_text(stmt, 5));
+            cJSON_AddStringToObject(resp, "created_at", (const char*)sqlite3_column_text(stmt, 6));
+            cJSON_AddStringToObject(resp, "updated_at", (const char*)sqlite3_column_text(stmt, 7));
+        }
+    }
+    sqlite3_finalize(stmt);
+    if (!resp) return send_error(connection, MHD_HTTP_NOT_FOUND, "not_found");
+    /* Add files */
+    cJSON *files = cJSON_AddArrayToObject(resp, "files");
+    if (sqlite3_prepare_v2(g_app.db,
+        "SELECT id, mime_type, file_size, original_name, created_at "
+        "FROM ticket_files WHERE ticket_id=? AND tenant_id=?", -1, &stmt, NULL) == SQLITE_OK) {
+        sqlite3_bind_int(stmt, 1, ticket_id);
+        sqlite3_bind_int(stmt, 2, t->id);
+        while (sqlite3_step(stmt) == SQLITE_ROW) {
+            cJSON *f = cJSON_CreateObject();
+            cJSON_AddNumberToObject(f, "id", sqlite3_column_int(stmt, 0));
+            cJSON_AddStringToObject(f, "mime_type", (const char*)sqlite3_column_text(stmt, 1));
+            cJSON_AddNumberToObject(f, "file_size", sqlite3_column_int(stmt, 2));
+            cJSON_AddStringToObject(f, "original_name", (const char*)sqlite3_column_text(stmt, 3));
+            cJSON_AddStringToObject(f, "created_at", (const char*)sqlite3_column_text(stmt, 4));
+            cJSON_AddItemToArray(files, f);
+        }
+    }
+    sqlite3_finalize(stmt);
+    int ret = send_json(connection, MHD_HTTP_OK, resp);
+    cJSON_Delete(resp);
+    return ret;
+}
+
+static int handle_client_create_complaint(struct MHD_Connection *connection, struct MHD_Connection *conn_for_ip, const char *body) {
+    cJSON *root = cJSON_Parse(body);
+    if (!root) return send_error(connection, MHD_HTTP_BAD_REQUEST, "invalid_json");
+    const cJSON *j_body = cJSON_GetObjectItem(root, "body");
+    if (!cJSON_IsString(j_body) || strlen(j_body->valuestring) < 10) {
+        cJSON_Delete(root); return send_error(connection, MHD_HTTP_BAD_REQUEST, "body_too_short");
+    }
+    if (strlen(j_body->valuestring) > 1024) {
+        cJSON_Delete(root); return send_error(connection, MHD_HTTP_BAD_REQUEST, "body_too_long");
+    }
+    /* Get IP hash for rate-limit tracking (non-reversible) */
+    char ip[CLIENT_IP_LEN];
+    get_client_ip(conn_for_ip, ip);
+    char ip_hash[65];
+    sha256_hex(ip, ip_hash);
+
+    if (!db_exec_fmt(
+        "INSERT INTO anonymous_complaints(body, created_ip_hash, status) VALUES('%q','%q','new')",
+        j_body->valuestring, ip_hash))
+    {
+        cJSON_Delete(root); return send_error(connection, MHD_HTTP_INTERNAL_SERVER_ERROR, "db_error");
+    }
+    int complaint_id = (int)sqlite3_last_insert_rowid(g_app.db);
+
+    /* Optional files */
+    const cJSON *j_files = cJSON_GetObjectItem(root, "files");
+    if (cJSON_IsArray(j_files)) {
+        char month_dir[700];
+        char month_str[MONTH_LEN]; current_month(month_str);
+        snprintf(month_dir, sizeof(month_dir), "%s/complaints/%s", g_app.uploads_dir, month_str);
+        struct stat st = {0};
+        if (stat(month_dir, &st) != 0) mkdir(month_dir, 0700);
+        int fc = cJSON_GetArraySize(j_files);
+        if (fc > 4) fc = 4;
+        for (int i = 0; i < fc; i++) {
+            cJSON *f = cJSON_GetArrayItem(j_files, i);
+            const cJSON *jdata = cJSON_GetObjectItem(f, "data_b64");
+            const cJSON *jmime = cJSON_GetObjectItem(f, "mime");
+            if (!cJSON_IsString(jdata) || !cJSON_IsString(jmime)) continue;
+            unsigned char *decoded = NULL; size_t decoded_len = 0;
+            if (!base64_decode_simple(jdata->valuestring, &decoded, &decoded_len)) continue;
+            if (decoded_len == 0 || decoded_len > (size_t)(15 * 1024 * 1024)) { free(decoded); continue; }
+            const char *detected_mime = detect_mime_from_magic(decoded, decoded_len);
+            if (!detected_mime) { free(decoded); continue; }
+            char out_path[600];
+            if (!save_upload_file(decoded, decoded_len, month_dir, mime_to_ext(detected_mime), out_path)) { free(decoded); continue; }
+            free(decoded);
+            db_exec_fmt("INSERT INTO complaint_files(complaint_id,storage_path,mime_type,file_size) VALUES(%d,'%q','%q',%lld)",
+                complaint_id, out_path, detected_mime, (long long)decoded_len);
+        }
+    }
+    cJSON_Delete(root);
+
+    cJSON *resp = cJSON_CreateObject();
+    cJSON_AddStringToObject(resp, "message", "complaint_received");
+    int ret = send_json(connection, MHD_HTTP_CREATED, resp);
+    cJSON_Delete(resp);
+    return ret;
+}
+
+static int handle_client_get_notices(struct MHD_Connection *connection) {
+    sqlite3_stmt *stmt = NULL;
+    cJSON *root = cJSON_CreateObject();
+    cJSON *items = cJSON_AddArrayToObject(root, "notices");
+    if (sqlite3_prepare_v2(g_app.db,
+        "SELECT id, title, body, created_at FROM notices WHERE active=1 ORDER BY created_at DESC LIMIT 20",
+        -1, &stmt, NULL) == SQLITE_OK) {
+        while (sqlite3_step(stmt) == SQLITE_ROW) {
+            cJSON *n = cJSON_CreateObject();
+            cJSON_AddNumberToObject(n, "id", sqlite3_column_int(stmt, 0));
+            cJSON_AddStringToObject(n, "title", (const char*)sqlite3_column_text(stmt, 1));
+            cJSON_AddStringToObject(n, "body", (const char*)sqlite3_column_text(stmt, 2));
+            cJSON_AddStringToObject(n, "created_at", (const char*)sqlite3_column_text(stmt, 3));
+            cJSON_AddItemToArray(items, n);
+        }
+    }
+    sqlite3_finalize(stmt);
+    int ret = send_json(connection, MHD_HTTP_OK, root);
+    cJSON_Delete(root);
+    return ret;
+}
+
+static int handle_client_get_notifications(struct MHD_Connection *connection, const TenantSubject *t) {
+    sqlite3_stmt *stmt = NULL;
+    cJSON *root = cJSON_CreateObject();
+    cJSON *items = cJSON_AddArrayToObject(root, "notifications");
+    if (sqlite3_prepare_v2(g_app.db,
+        "SELECT id, type, title, message, IFNULL(related_id,0), read_status, created_at "
+        "FROM notifications WHERE recipient_tenant_id=? ORDER BY created_at DESC LIMIT 50",
+        -1, &stmt, NULL) == SQLITE_OK) {
+        sqlite3_bind_int(stmt, 1, t->id);
+        while (sqlite3_step(stmt) == SQLITE_ROW) {
+            cJSON *item = cJSON_CreateObject();
+            cJSON_AddNumberToObject(item, "id", sqlite3_column_int(stmt, 0));
+            cJSON_AddStringToObject(item, "type", (const char*)sqlite3_column_text(stmt, 1));
+            cJSON_AddStringToObject(item, "title", (const char*)sqlite3_column_text(stmt, 2));
+            cJSON_AddStringToObject(item, "message", (const char*)sqlite3_column_text(stmt, 3));
+            cJSON_AddNumberToObject(item, "related_id", sqlite3_column_int(stmt, 4));
+            cJSON_AddBoolToObject(item, "read", sqlite3_column_int(stmt, 5) == 1);
+            cJSON_AddStringToObject(item, "created_at", (const char*)sqlite3_column_text(stmt, 6));
+            cJSON_AddItemToArray(items, item);
+        }
+    }
+    sqlite3_finalize(stmt);
+    int ret = send_json(connection, MHD_HTTP_OK, root);
+    cJSON_Delete(root);
+    return ret;
+}
+
+static int handle_client_mark_notification_read(struct MHD_Connection *connection, int notif_id, const TenantSubject *t) {
+    /* Ownership: only update if recipient_tenant_id matches */
+    db_exec_fmt("UPDATE notifications SET read_status=1 WHERE id=%d AND recipient_tenant_id=%d", notif_id, t->id);
+    cJSON *j = cJSON_CreateObject(); cJSON_AddStringToObject(j, "message", "ok");
+    int ret = send_json(connection, MHD_HTTP_OK, j); cJSON_Delete(j);
+    return ret;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   CLIENT PANEL — ADMIN-FACING HANDLERS
+   ═══════════════════════════════════════════════════════════════ */
+
+static int handle_clients_list_tenants(struct MHD_Connection *connection) {
+    sqlite3_stmt *stmt = NULL;
+    cJSON *root = cJSON_CreateObject();
+    cJSON *items = cJSON_AddArrayToObject(root, "tenants");
+    if (sqlite3_prepare_v2(g_app.db,
+        "SELECT t.id, t.full_name, t.email, t.phone, IFNULL(u.unit_number,'') as unit, "
+        "CASE WHEN t.password_hash!='' THEN 1 ELSE 0 END as has_password, "
+        "t.active, IFNULL(t.portal_last_login,'') "
+        "FROM tenants t LEFT JOIN units u ON u.id=t.unit_id "
+        "WHERE t.active=1 ORDER BY t.full_name ASC",
+        -1, &stmt, NULL) == SQLITE_OK) {
+        while (sqlite3_step(stmt) == SQLITE_ROW) {
+            cJSON *item = cJSON_CreateObject();
+            cJSON_AddNumberToObject(item, "id", sqlite3_column_int(stmt, 0));
+            cJSON_AddStringToObject(item, "full_name", (const char*)sqlite3_column_text(stmt, 1));
+            cJSON_AddStringToObject(item, "email", (const char*)sqlite3_column_text(stmt, 2));
+            cJSON_AddStringToObject(item, "phone", (const char*)sqlite3_column_text(stmt, 3));
+            cJSON_AddStringToObject(item, "unit_number", (const char*)sqlite3_column_text(stmt, 4));
+            cJSON_AddBoolToObject(item, "has_password", sqlite3_column_int(stmt, 5) == 1);
+            cJSON_AddBoolToObject(item, "active", sqlite3_column_int(stmt, 6) == 1);
+            cJSON_AddStringToObject(item, "portal_last_login", (const char*)sqlite3_column_text(stmt, 7));
+            cJSON_AddItemToArray(items, item);
+        }
+    }
+    sqlite3_finalize(stmt);
+    int ret = send_json(connection, MHD_HTTP_OK, root);
+    cJSON_Delete(root);
+    return ret;
+}
+
+static int handle_clients_set_tenant_password(struct MHD_Connection *connection, int tenant_id, const char *body) {
+    cJSON *root = cJSON_Parse(body);
+    if (!root) return send_error(connection, MHD_HTTP_BAD_REQUEST, "invalid_json");
+    const cJSON *j_pw = cJSON_GetObjectItem(root, "password");
+    if (!cJSON_IsString(j_pw) || strlen(j_pw->valuestring) < 6) {
+        cJSON_Delete(root); return send_error(connection, MHD_HTTP_BAD_REQUEST, "password_too_short");
+    }
+    char pw_hash[65];
+    hash_password(j_pw->valuestring, pw_hash);
+    cJSON_Delete(root);
+    db_exec_fmt("UPDATE tenants SET password_hash='%q', password_set_at=datetime('now') WHERE id=%d", pw_hash, tenant_id);
+    /* Invalidate active sessions */
+    db_exec_fmt("DELETE FROM tenant_sessions WHERE tenant_id=%d", tenant_id);
+    cJSON *j = cJSON_CreateObject(); cJSON_AddStringToObject(j, "message", "password_set");
+    int ret = send_json(connection, MHD_HTTP_OK, j); cJSON_Delete(j);
+    return ret;
+}
+
+static int handle_clients_get_tickets(struct MHD_Connection *connection) {
+    const char *status_q = MHD_lookup_connection_value(connection, MHD_GET_ARGUMENT_KIND, "status");
+    const char *cat_q = MHD_lookup_connection_value(connection, MHD_GET_ARGUMENT_KIND, "category");
+    const char *tenant_q = MHD_lookup_connection_value(connection, MHD_GET_ARGUMENT_KIND, "tenant_id");
+
+    char where[512] = " WHERE 1=1";
+    if (status_q && strlen(status_q) > 0) {
+        char tmp[64]; snprintf(tmp, 64, " AND tk.status='%s'", status_q); strncat(where, tmp, sizeof(where)-strlen(where)-1);
+    }
+    if (cat_q && strlen(cat_q) > 0) {
+        char tmp[64]; snprintf(tmp, 64, " AND tk.category='%s'", cat_q); strncat(where, tmp, sizeof(where)-strlen(where)-1);
+    }
+    if (tenant_q && strlen(tenant_q) > 0) {
+        char tmp[32]; snprintf(tmp, 32, " AND tk.tenant_id=%d", atoi(tenant_q)); strncat(where, tmp, sizeof(where)-strlen(where)-1);
+    }
+
+    char *sql = sqlite3_mprintf(
+        "SELECT tk.id, tk.category, tk.subcategory, tk.description, tk.status, "
+        "tk.admin_notes, tk.created_at, tk.updated_at, "
+        "t.full_name, t.email, IFNULL(u.unit_number,''), t.id as tid, "
+        "(SELECT COUNT(*) FROM ticket_files WHERE ticket_id=tk.id) as file_count "
+        "FROM tickets tk "
+        "JOIN tenants t ON t.id=tk.tenant_id "
+        "LEFT JOIN units u ON u.id=tk.unit_id "
+        "%s ORDER BY tk.created_at DESC LIMIT 200", where);
+    if (!sql) return send_error(connection, MHD_HTTP_INTERNAL_SERVER_ERROR, "db_error");
+
+    sqlite3_stmt *stmt = NULL;
+    cJSON *root = cJSON_CreateObject();
+    cJSON *items = cJSON_AddArrayToObject(root, "tickets");
+    if (sqlite3_prepare_v2(g_app.db, sql, -1, &stmt, NULL) == SQLITE_OK) {
+        while (sqlite3_step(stmt) == SQLITE_ROW) {
+            cJSON *item = cJSON_CreateObject();
+            cJSON_AddNumberToObject(item, "id", sqlite3_column_int(stmt, 0));
+            cJSON_AddStringToObject(item, "category", (const char*)sqlite3_column_text(stmt, 1));
+            cJSON_AddStringToObject(item, "subcategory", (const char*)sqlite3_column_text(stmt, 2));
+            cJSON_AddStringToObject(item, "description", (const char*)sqlite3_column_text(stmt, 3));
+            cJSON_AddStringToObject(item, "status", (const char*)sqlite3_column_text(stmt, 4));
+            cJSON_AddStringToObject(item, "admin_notes", (const char*)sqlite3_column_text(stmt, 5));
+            cJSON_AddStringToObject(item, "created_at", (const char*)sqlite3_column_text(stmt, 6));
+            cJSON_AddStringToObject(item, "updated_at", (const char*)sqlite3_column_text(stmt, 7));
+            cJSON_AddStringToObject(item, "tenant_name", (const char*)sqlite3_column_text(stmt, 8));
+            cJSON_AddStringToObject(item, "tenant_email", (const char*)sqlite3_column_text(stmt, 9));
+            cJSON_AddStringToObject(item, "unit_number", (const char*)sqlite3_column_text(stmt, 10));
+            cJSON_AddNumberToObject(item, "tenant_id", sqlite3_column_int(stmt, 11));
+            cJSON_AddNumberToObject(item, "file_count", sqlite3_column_int(stmt, 12));
+            cJSON_AddItemToArray(items, item);
+        }
+    }
+    sqlite3_finalize(stmt);
+    sqlite3_free(sql);
+    int ret = send_json(connection, MHD_HTTP_OK, root);
+    cJSON_Delete(root);
+    return ret;
+}
+
+static int handle_clients_update_ticket(struct MHD_Connection *connection, int ticket_id, const char *body) {
+    cJSON *root = cJSON_Parse(body);
+    if (!root) return send_error(connection, MHD_HTTP_BAD_REQUEST, "invalid_json");
+    const cJSON *j_status = cJSON_GetObjectItem(root, "status");
+    const cJSON *j_notes = cJSON_GetObjectItem(root, "admin_notes");
+
+    if (j_status && cJSON_IsString(j_status)) {
+        db_exec_fmt("UPDATE tickets SET status='%q', updated_at=datetime('now') WHERE id=%d",
+            j_status->valuestring, ticket_id);
+        /* Notify tenant */
+        sqlite3_stmt *stmt = NULL;
+        if (sqlite3_prepare_v2(g_app.db,
+            "SELECT tenant_id FROM tickets WHERE id=?", -1, &stmt, NULL) == SQLITE_OK) {
+            sqlite3_bind_int(stmt, 1, ticket_id);
+            if (sqlite3_step(stmt) == SQLITE_ROW) {
+                int tid = sqlite3_column_int(stmt, 0);
+                db_exec_fmt(
+                    "INSERT INTO notifications(type,title,message,related_id,recipient_tenant_id) "
+                    "VALUES('ticket_update','Chamado atualizado','Seu chamado teve o status alterado.',%d,%d)",
+                    ticket_id, tid);
+            }
+        }
+        sqlite3_finalize(stmt);
+    }
+    if (j_notes && cJSON_IsString(j_notes)) {
+        db_exec_fmt("UPDATE tickets SET admin_notes='%q', updated_at=datetime('now') WHERE id=%d",
+            j_notes->valuestring, ticket_id);
+    }
+    cJSON_Delete(root);
+    cJSON *j = cJSON_CreateObject(); cJSON_AddStringToObject(j, "message", "updated");
+    int ret = send_json(connection, MHD_HTTP_OK, j); cJSON_Delete(j);
+    return ret;
+}
+
+static int handle_clients_serve_ticket_file(struct MHD_Connection *connection, int file_id) {
+    sqlite3_stmt *stmt = NULL;
+    char storage_path[600] = "", mime_type[64] = "application/octet-stream";
+    if (sqlite3_prepare_v2(g_app.db,
+        "SELECT storage_path, mime_type FROM ticket_files WHERE id=?", -1, &stmt, NULL) == SQLITE_OK) {
+        sqlite3_bind_int(stmt, 1, file_id);
+        if (sqlite3_step(stmt) == SQLITE_ROW) {
+            snprintf(storage_path, 600, "%s", (const char*)sqlite3_column_text(stmt, 0));
+            snprintf(mime_type, 64, "%s", (const char*)sqlite3_column_text(stmt, 1));
+        }
+    }
+    sqlite3_finalize(stmt);
+    if (!storage_path[0]) return send_error(connection, MHD_HTTP_NOT_FOUND, "not_found");
+    int fd = open(storage_path, O_RDONLY);
+    if (fd < 0) return send_error(connection, MHD_HTTP_NOT_FOUND, "file_not_found");
+    struct stat fst; fstat(fd, &fst);
+    struct MHD_Response *resp = MHD_create_response_from_fd((uint64_t)fst.st_size, fd);
+    if (!resp) { close(fd); return send_error(connection, MHD_HTTP_INTERNAL_SERVER_ERROR, "io_error"); }
+    add_cors_headers(resp, connection);
+    MHD_add_response_header(resp, "Content-Type", mime_type);
+    int ret = MHD_queue_response(connection, MHD_HTTP_OK, resp);
+    MHD_destroy_response(resp);
+    return ret;
+}
+
+static int handle_clients_get_complaints(struct MHD_Connection *connection) {
+    const char *status_q = MHD_lookup_connection_value(connection, MHD_GET_ARGUMENT_KIND, "status");
+    sqlite3_stmt *stmt = NULL;
+    char sql_buf[512];
+    if (status_q && strlen(status_q) > 0)
+        snprintf(sql_buf, sizeof(sql_buf), "SELECT id, body, status, admin_notes, created_at FROM anonymous_complaints WHERE status='%s' ORDER BY created_at DESC LIMIT 200", status_q);
+    else
+        snprintf(sql_buf, sizeof(sql_buf), "SELECT id, body, status, admin_notes, created_at FROM anonymous_complaints ORDER BY created_at DESC LIMIT 200");
+    cJSON *root = cJSON_CreateObject();
+    cJSON *items = cJSON_AddArrayToObject(root, "complaints");
+    if (sqlite3_prepare_v2(g_app.db, sql_buf, -1, &stmt, NULL) == SQLITE_OK) {
+        while (sqlite3_step(stmt) == SQLITE_ROW) {
+            cJSON *item = cJSON_CreateObject();
+            cJSON_AddNumberToObject(item, "id", sqlite3_column_int(stmt, 0));
+            cJSON_AddStringToObject(item, "body", (const char*)sqlite3_column_text(stmt, 1));
+            cJSON_AddStringToObject(item, "status", (const char*)sqlite3_column_text(stmt, 2));
+            cJSON_AddStringToObject(item, "admin_notes", (const char*)sqlite3_column_text(stmt, 3));
+            cJSON_AddStringToObject(item, "created_at", (const char*)sqlite3_column_text(stmt, 4));
+            cJSON_AddItemToArray(items, item);
+        }
+    }
+    sqlite3_finalize(stmt);
+    int ret = send_json(connection, MHD_HTTP_OK, root);
+    cJSON_Delete(root);
+    return ret;
+}
+
+static int handle_clients_update_complaint(struct MHD_Connection *connection, int complaint_id, const char *body) {
+    cJSON *root = cJSON_Parse(body);
+    if (!root) return send_error(connection, MHD_HTTP_BAD_REQUEST, "invalid_json");
+    const cJSON *j_status = cJSON_GetObjectItem(root, "status");
+    const cJSON *j_notes = cJSON_GetObjectItem(root, "admin_notes");
+    if (j_status && cJSON_IsString(j_status))
+        db_exec_fmt("UPDATE anonymous_complaints SET status='%q' WHERE id=%d", j_status->valuestring, complaint_id);
+    if (j_notes && cJSON_IsString(j_notes))
+        db_exec_fmt("UPDATE anonymous_complaints SET admin_notes='%q' WHERE id=%d", j_notes->valuestring, complaint_id);
+    cJSON_Delete(root);
+    cJSON *j = cJSON_CreateObject(); cJSON_AddStringToObject(j, "message", "updated");
+    int ret = send_json(connection, MHD_HTTP_OK, j); cJSON_Delete(j);
+    return ret;
+}
+
+static int handle_clients_get_notices(struct MHD_Connection *connection) {
+    sqlite3_stmt *stmt = NULL;
+    cJSON *root = cJSON_CreateObject();
+    cJSON *items = cJSON_AddArrayToObject(root, "notices");
+    if (sqlite3_prepare_v2(g_app.db,
+        "SELECT id, title, body, active, created_by, created_at FROM notices ORDER BY created_at DESC",
+        -1, &stmt, NULL) == SQLITE_OK) {
+        while (sqlite3_step(stmt) == SQLITE_ROW) {
+            cJSON *n = cJSON_CreateObject();
+            cJSON_AddNumberToObject(n, "id", sqlite3_column_int(stmt, 0));
+            cJSON_AddStringToObject(n, "title", (const char*)sqlite3_column_text(stmt, 1));
+            cJSON_AddStringToObject(n, "body", (const char*)sqlite3_column_text(stmt, 2));
+            cJSON_AddBoolToObject(n, "active", sqlite3_column_int(stmt, 3) == 1);
+            cJSON_AddNumberToObject(n, "created_by", sqlite3_column_int(stmt, 4));
+            cJSON_AddStringToObject(n, "created_at", (const char*)sqlite3_column_text(stmt, 5));
+            cJSON_AddItemToArray(items, n);
+        }
+    }
+    sqlite3_finalize(stmt);
+    int ret = send_json(connection, MHD_HTTP_OK, root);
+    cJSON_Delete(root);
+    return ret;
+}
+
+static int handle_clients_create_notice(struct MHD_Connection *connection, const char *body, const AuthUser *admin) {
+    cJSON *root = cJSON_Parse(body);
+    if (!root) return send_error(connection, MHD_HTTP_BAD_REQUEST, "invalid_json");
+    const cJSON *j_title = cJSON_GetObjectItem(root, "title");
+    const cJSON *j_body = cJSON_GetObjectItem(root, "body");
+    if (!cJSON_IsString(j_title) || !cJSON_IsString(j_body)) {
+        cJSON_Delete(root); return send_error(connection, MHD_HTTP_BAD_REQUEST, "missing_fields");
+    }
+    db_exec_fmt("INSERT INTO notices(title,body,created_by,active) VALUES('%q','%q',%d,1)",
+        j_title->valuestring, j_body->valuestring, admin->id);
+    cJSON_Delete(root);
+    cJSON *j = cJSON_CreateObject(); cJSON_AddStringToObject(j, "message", "created");
+    int ret = send_json(connection, MHD_HTTP_CREATED, j); cJSON_Delete(j);
+    return ret;
+}
+
+static int handle_clients_delete_notice(struct MHD_Connection *connection, int notice_id) {
+    db_exec_fmt("UPDATE notices SET active=0 WHERE id=%d", notice_id);
+    cJSON *j = cJSON_CreateObject(); cJSON_AddStringToObject(j, "message", "deleted");
+    int ret = send_json(connection, MHD_HTTP_OK, j); cJSON_Delete(j);
+    return ret;
+}
+
+/* Unlink every file on disk for a ticket before removing DB rows. */
+static void delete_ticket_files_on_disk(int ticket_id) {
+    sqlite3_stmt *stmt = NULL;
+    if (sqlite3_prepare_v2(g_app.db, "SELECT storage_path FROM ticket_files WHERE ticket_id=?", -1, &stmt, NULL) != SQLITE_OK) return;
+    sqlite3_bind_int(stmt, 1, ticket_id);
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        const char *path = (const char*)sqlite3_column_text(stmt, 0);
+        if (path && *path) unlink(path);
+    }
+    sqlite3_finalize(stmt);
+}
+
+static void delete_complaint_files_on_disk(int complaint_id) {
+    sqlite3_stmt *stmt = NULL;
+    if (sqlite3_prepare_v2(g_app.db, "SELECT storage_path FROM complaint_files WHERE complaint_id=?", -1, &stmt, NULL) != SQLITE_OK) return;
+    sqlite3_bind_int(stmt, 1, complaint_id);
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        const char *path = (const char*)sqlite3_column_text(stmt, 0);
+        if (path && *path) unlink(path);
+    }
+    sqlite3_finalize(stmt);
+}
+
+static int handle_clients_delete_ticket(struct MHD_Connection *connection, int ticket_id) {
+    delete_ticket_files_on_disk(ticket_id);
+    db_exec_fmt("DELETE FROM ticket_files WHERE ticket_id=%d", ticket_id);
+    db_exec_fmt("DELETE FROM notifications WHERE type='ticket_update' AND related_id=%d", ticket_id);
+    db_exec_fmt("DELETE FROM tickets WHERE id=%d", ticket_id);
+    cJSON *j = cJSON_CreateObject(); cJSON_AddStringToObject(j, "message", "deleted");
+    int ret = send_json(connection, MHD_HTTP_OK, j); cJSON_Delete(j);
+    return ret;
+}
+
+static int handle_clients_delete_complaint(struct MHD_Connection *connection, int complaint_id) {
+    delete_complaint_files_on_disk(complaint_id);
+    db_exec_fmt("DELETE FROM complaint_files WHERE complaint_id=%d", complaint_id);
+    db_exec_fmt("DELETE FROM anonymous_complaints WHERE id=%d", complaint_id);
+    cJSON *j = cJSON_CreateObject(); cJSON_AddStringToObject(j, "message", "deleted");
+    int ret = send_json(connection, MHD_HTTP_OK, j); cJSON_Delete(j);
+    return ret;
+}
+
+static int handle_clients_get_ticket_detail(struct MHD_Connection *connection, int ticket_id) {
+    sqlite3_stmt *stmt = NULL;
+    cJSON *resp = NULL;
+    if (sqlite3_prepare_v2(g_app.db,
+        "SELECT tk.id, tk.category, tk.subcategory, tk.description, tk.status, "
+        "tk.admin_notes, tk.created_at, tk.updated_at, "
+        "t.full_name, t.email, IFNULL(u.unit_number,'') "
+        "FROM tickets tk JOIN tenants t ON t.id=tk.tenant_id "
+        "LEFT JOIN units u ON u.id=tk.unit_id "
+        "WHERE tk.id=?", -1, &stmt, NULL) == SQLITE_OK) {
+        sqlite3_bind_int(stmt, 1, ticket_id);
+        if (sqlite3_step(stmt) == SQLITE_ROW) {
+            resp = cJSON_CreateObject();
+            cJSON_AddNumberToObject(resp, "id", sqlite3_column_int(stmt, 0));
+            cJSON_AddStringToObject(resp, "category", (const char*)sqlite3_column_text(stmt, 1));
+            cJSON_AddStringToObject(resp, "subcategory", (const char*)sqlite3_column_text(stmt, 2));
+            cJSON_AddStringToObject(resp, "description", (const char*)sqlite3_column_text(stmt, 3));
+            cJSON_AddStringToObject(resp, "status", (const char*)sqlite3_column_text(stmt, 4));
+            cJSON_AddStringToObject(resp, "admin_notes", (const char*)sqlite3_column_text(stmt, 5));
+            cJSON_AddStringToObject(resp, "created_at", (const char*)sqlite3_column_text(stmt, 6));
+            cJSON_AddStringToObject(resp, "updated_at", (const char*)sqlite3_column_text(stmt, 7));
+            cJSON_AddStringToObject(resp, "tenant_name", (const char*)sqlite3_column_text(stmt, 8));
+            cJSON_AddStringToObject(resp, "tenant_email", (const char*)sqlite3_column_text(stmt, 9));
+            cJSON_AddStringToObject(resp, "unit_number", (const char*)sqlite3_column_text(stmt, 10));
+        }
+    }
+    sqlite3_finalize(stmt);
+    if (!resp) return send_error(connection, MHD_HTTP_NOT_FOUND, "not_found");
+    cJSON *files = cJSON_AddArrayToObject(resp, "files");
+    if (sqlite3_prepare_v2(g_app.db,
+        "SELECT id, mime_type, file_size, original_name, created_at FROM ticket_files WHERE ticket_id=?",
+        -1, &stmt, NULL) == SQLITE_OK) {
+        sqlite3_bind_int(stmt, 1, ticket_id);
+        while (sqlite3_step(stmt) == SQLITE_ROW) {
+            cJSON *f = cJSON_CreateObject();
+            cJSON_AddNumberToObject(f, "id", sqlite3_column_int(stmt, 0));
+            cJSON_AddStringToObject(f, "mime_type", (const char*)sqlite3_column_text(stmt, 1));
+            cJSON_AddNumberToObject(f, "file_size", sqlite3_column_int(stmt, 2));
+            cJSON_AddStringToObject(f, "original_name", (const char*)sqlite3_column_text(stmt, 3));
+            cJSON_AddStringToObject(f, "created_at", (const char*)sqlite3_column_text(stmt, 4));
+            cJSON_AddItemToArray(files, f);
+        }
+    }
+    sqlite3_finalize(stmt);
+    int ret = send_json(connection, MHD_HTTP_OK, resp);
+    cJSON_Delete(resp);
+    return ret;
+}
+
 static int route_request(struct MHD_Connection *connection, const char *url, const char *method, const char *body) {
     if (strcmp(method, "OPTIONS") == 0) {
         return send_response(connection, MHD_HTTP_NO_CONTENT, "text/plain", "", 0);
@@ -4291,6 +5567,109 @@ static int route_request(struct MHD_Connection *connection, const char *url, con
     int ret = MHD_NO;
     AuthUser auth_user;
     auth_user_clear(&auth_user);
+
+    /* Tenant-facing client routes — separate auth audience */
+    int is_client_route = starts_with(url, "/api/client/");
+    if (is_client_route) {
+        /* Public: tenant login */
+        if (strcmp(url, "/api/client/auth/login") == 0 && strcmp(method, "POST") == 0) {
+            char auth_ip[CLIENT_IP_LEN]; get_client_ip(connection, auth_ip);
+            if (!rate_limit_check(g_auth_buckets, auth_ip, RATE_LIMIT_AUTH_RPM)) {
+                pthread_mutex_unlock(&g_app.db_lock);
+                struct MHD_Response *r = MHD_create_response_from_buffer(29, (void*)"{\"error\":\"too_many_requests\"}", MHD_RESPMEM_PERSISTENT);
+                add_cors_headers(r, connection); MHD_add_response_header(r, "Retry-After", "60");
+                int rv = MHD_queue_response(connection, MHD_HTTP_TOO_MANY_REQUESTS, r);
+                MHD_destroy_response(r); return rv;
+            }
+            int ret = handle_client_login(connection, body);
+            pthread_mutex_unlock(&g_app.db_lock);
+            return ret;
+        }
+        /* All other client routes require tenant auth */
+        TenantSubject tenant_subj = {0};
+        if (!authenticate_client_request(connection, &tenant_subj)) {
+            pthread_mutex_unlock(&g_app.db_lock);
+            return send_error(connection, MHD_HTTP_UNAUTHORIZED, "unauthorized");
+        }
+        if (!has_client_route_access(url)) {
+            pthread_mutex_unlock(&g_app.db_lock);
+            return send_error(connection, MHD_HTTP_FORBIDDEN, "forbidden");
+        }
+        int ret = MHD_NO;
+        /* Tenant routes dispatch */
+        if (strcmp(url, "/api/client/auth/logout") == 0 && strcmp(method, "POST") == 0) {
+            const char *ah = MHD_lookup_connection_value(connection, MHD_HEADER_KIND, "Authorization");
+            ret = handle_client_logout(connection, connection, ah);
+        } else if (strcmp(url, "/api/client/auth/me") == 0 && strcmp(method, "GET") == 0) {
+            ret = handle_client_me(connection, &tenant_subj);
+        } else if (strcmp(url, "/api/client/auth/password") == 0 && strcmp(method, "PUT") == 0) {
+            ret = handle_client_change_password(connection, &tenant_subj, body);
+        } else if (strcmp(url, "/api/client/dashboard") == 0 && strcmp(method, "GET") == 0) {
+            ret = handle_client_dashboard(connection, &tenant_subj);
+        } else if (strcmp(url, "/api/client/contract") == 0 && strcmp(method, "GET") == 0) {
+            ret = handle_client_contract_info(connection, &tenant_subj);
+        } else if (strcmp(url, "/api/client/tickets") == 0 && strcmp(method, "GET") == 0) {
+            ret = handle_client_get_tickets(connection, &tenant_subj);
+        } else if (strcmp(url, "/api/client/tickets") == 0 && strcmp(method, "POST") == 0) {
+            /* Rate limit: 3/h per tenant id + 10/h per IP */
+            char tip[CLIENT_IP_LEN]; get_client_ip(connection, tip);
+            char tid_str[16]; snprintf(tid_str, 16, "%d", tenant_subj.id);
+            if (!rate_limit_check(g_tenant_ticket_buckets, tid_str, 3) ||
+                !rate_limit_check(g_tenant_ip_upload_buckets, tip, 10)) {
+                pthread_mutex_unlock(&g_app.db_lock);
+                struct MHD_Response *r = MHD_create_response_from_buffer(29, (void*)"{\"error\":\"too_many_requests\"}", MHD_RESPMEM_PERSISTENT);
+                add_cors_headers(r, connection); MHD_add_response_header(r, "Retry-After", "3600");
+                int rv = MHD_queue_response(connection, MHD_HTTP_TOO_MANY_REQUESTS, r);
+                MHD_destroy_response(r); return rv;
+            }
+            ret = handle_client_create_ticket(connection, &tenant_subj, body);
+        } else if (strcmp(url, "/api/client/complaints") == 0 && strcmp(method, "POST") == 0) {
+            char cip[CLIENT_IP_LEN]; get_client_ip(connection, cip);
+            if (!rate_limit_check(g_complaint_ip_buckets, cip, 2)) {
+                pthread_mutex_unlock(&g_app.db_lock);
+                struct MHD_Response *r = MHD_create_response_from_buffer(29, (void*)"{\"error\":\"too_many_requests\"}", MHD_RESPMEM_PERSISTENT);
+                add_cors_headers(r, connection); MHD_add_response_header(r, "Retry-After", "3600");
+                int rv = MHD_queue_response(connection, MHD_HTTP_TOO_MANY_REQUESTS, r);
+                MHD_destroy_response(r); return rv;
+            }
+            ret = handle_client_create_complaint(connection, connection, body);
+        } else if (strcmp(url, "/api/client/notices") == 0 && strcmp(method, "GET") == 0) {
+            ret = handle_client_get_notices(connection);
+        } else if (strcmp(url, "/api/client/notifications") == 0 && strcmp(method, "GET") == 0) {
+            ret = handle_client_get_notifications(connection, &tenant_subj);
+        } else {
+            int tid_param = 0, fid_param = 0, doc_id_param = 0;
+            if (parse_id_prefix(url, "/api/client/tickets/", &tid_param)) {
+                if (strcmp(method, "GET") == 0) {
+                    /* Check for file sub-path: /api/client/tickets/N/files/M */
+                    char files_prefix[64]; snprintf(files_prefix, 64, "/api/client/tickets/%d/files/", tid_param);
+                    if (starts_with(url, files_prefix)) {
+                        parse_id_path(url, files_prefix, &fid_param);
+                        ret = handle_client_serve_ticket_file(connection, fid_param, &tenant_subj);
+                    } else {
+                        ret = handle_client_get_ticket(connection, tid_param, &tenant_subj);
+                    }
+                } else {
+                    ret = send_error(connection, MHD_HTTP_METHOD_NOT_ALLOWED, "method_not_allowed");
+                }
+            } else if (parse_id_path(url, "/api/client/files/", &fid_param)) {
+                ret = handle_client_serve_ticket_file(connection, fid_param, &tenant_subj);
+            } else if (parse_id_path(url, "/api/client/documents/", &doc_id_param)) {
+                ret = handle_client_serve_document(connection, doc_id_param, &tenant_subj);
+            } else if (parse_id_path(url, "/api/client/notifications/", &tid_param)) {
+                if (starts_with(url + strlen("/api/client/notifications/") + 10, "/read") ||
+                    strcmp(method, "PUT") == 0) {
+                    ret = handle_client_mark_notification_read(connection, tid_param, &tenant_subj);
+                } else {
+                    ret = send_error(connection, MHD_HTTP_NOT_FOUND, "route_not_found");
+                }
+            } else {
+                ret = send_error(connection, MHD_HTTP_NOT_FOUND, "route_not_found");
+            }
+        }
+        pthread_mutex_unlock(&g_app.db_lock);
+        return ret;
+    }
 
     int needs_auth = starts_with(url, "/api/") && strcmp(url, "/api/auth/login") != 0 && strcmp(url, "/api/pre-register") != 0;
 
@@ -4312,7 +5691,7 @@ static int route_request(struct MHD_Connection *connection, const char *url, con
             pthread_mutex_unlock(&g_app.db_lock);
             struct MHD_Response *r = MHD_create_response_from_buffer(
                 29, (void *)"{\"error\":\"too_many_requests\"}", MHD_RESPMEM_PERSISTENT);
-            add_cors_headers(r);
+            add_cors_headers(r, connection);
             MHD_add_response_header(r, "Retry-After", "60");
             int rv = MHD_queue_response(connection, MHD_HTTP_TOO_MANY_REQUESTS, r);
             MHD_destroy_response(r);
@@ -4546,6 +5925,52 @@ static int route_request(struct MHD_Connection *connection, const char *url, con
         goto done;
     }
 
+    /* Admin Client Panel routes */
+    if (strcmp(url, "/api/clients/tenants") == 0 && strcmp(method, "GET") == 0) {
+        ret = handle_clients_list_tenants(connection); goto done;
+    }
+    if (strcmp(url, "/api/clients/tickets") == 0 && strcmp(method, "GET") == 0) {
+        ret = handle_clients_get_tickets(connection); goto done;
+    }
+    if (strcmp(url, "/api/clients/complaints") == 0 && strcmp(method, "GET") == 0) {
+        ret = handle_clients_get_complaints(connection); goto done;
+    }
+    if (strcmp(url, "/api/clients/notices") == 0 && strcmp(method, "GET") == 0) {
+        ret = handle_clients_get_notices(connection); goto done;
+    }
+    if (strcmp(url, "/api/clients/notices") == 0 && strcmp(method, "POST") == 0) {
+        ret = handle_clients_create_notice(connection, body, &auth_user); goto done;
+    }
+    {
+        int cid = 0;
+        if (parse_id_prefix(url, "/api/clients/tenants/", &cid)) {
+            if (strcmp(method, "POST") == 0) {
+                char pw_path[64]; snprintf(pw_path, 64, "/api/clients/tenants/%d/password", cid);
+                if (strcmp(url, pw_path) == 0) { ret = handle_clients_set_tenant_password(connection, cid, body); goto done; }
+            }
+        }
+        if (parse_id_path(url, "/api/clients/tickets/", &cid)) {
+            if (strcmp(method, "GET") == 0) {
+                /* /api/clients/tickets/:id/files/:fid */
+                char fp[64]; snprintf(fp, 64, "/api/clients/tickets/%d/files/", cid);
+                if (starts_with(url, fp)) {
+                    int fid = 0; parse_id_path(url, fp, &fid);
+                    ret = handle_clients_serve_ticket_file(connection, fid); goto done;
+                }
+                ret = handle_clients_get_ticket_detail(connection, cid); goto done;
+            }
+            if (strcmp(method, "PUT") == 0) { ret = handle_clients_update_ticket(connection, cid, body); goto done; }
+            if (strcmp(method, "DELETE") == 0) { ret = handle_clients_delete_ticket(connection, cid); goto done; }
+        }
+        if (parse_id_path(url, "/api/clients/complaints/", &cid)) {
+            if (strcmp(method, "PUT") == 0) { ret = handle_clients_update_complaint(connection, cid, body); goto done; }
+            if (strcmp(method, "DELETE") == 0) { ret = handle_clients_delete_complaint(connection, cid); goto done; }
+        }
+        if (parse_id_path(url, "/api/clients/notices/", &cid)) {
+            if (strcmp(method, "DELETE") == 0) { ret = handle_clients_delete_notice(connection, cid); goto done; }
+        }
+    }
+
     ret = send_error(connection, MHD_HTTP_NOT_FOUND, "route_not_found");
 
 done:
@@ -4575,7 +6000,7 @@ static enum MHD_Result request_handler(void *cls, struct MHD_Connection *connect
         if (!rate_limit_check(g_global_buckets, client_ip, RATE_LIMIT_GLOBAL_RPM)) {
             struct MHD_Response *r = MHD_create_response_from_buffer(
                 29, (void *)"{\"error\":\"too_many_requests\"}", MHD_RESPMEM_PERSISTENT);
-            add_cors_headers(r);
+            add_cors_headers(r, connection);
             MHD_add_response_header(r, "Retry-After", "60");
             int rv = MHD_queue_response(connection, MHD_HTTP_TOO_MANY_REQUESTS, r);
             MHD_destroy_response(r);
@@ -4591,7 +6016,11 @@ static enum MHD_Result request_handler(void *cls, struct MHD_Connection *connect
 
     if ((strcmp(method, "POST") == 0 || strcmp(method, "PUT") == 0 || strcmp(method, "PATCH") == 0) &&
         *upload_data_size > 0) {
-        if (info->size + *upload_data_size > MAX_BODY_BYTES) {
+        size_t body_cap = MAX_BODY_BYTES;
+        if (starts_with(url, "/api/client/tickets") || starts_with(url, "/api/client/complaints")) {
+            body_cap = (size_t)(64 * 1024 * 1024);
+        }
+        if (info->size + *upload_data_size > body_cap) {
             return MHD_NO;
         }
         char *new_data = realloc(info->data, info->size + *upload_data_size + 1);
@@ -4643,6 +6072,7 @@ int main(void) {
 
     snprintf(g_app.db_path, sizeof(g_app.db_path), "%s", db_path_env ? db_path_env : "./data/realstate.db");
     snprintf(g_app.generated_dir, sizeof(g_app.generated_dir), "%s", "./generated");
+    snprintf(g_app.uploads_dir, sizeof(g_app.uploads_dir), "%s", "./uploads");
 
     if (!ensure_directories()) {
         return 1;

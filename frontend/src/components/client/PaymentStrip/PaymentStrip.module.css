@@ -1,0 +1,60 @@
+.strip {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  scroll-snap-type: x mandatory;
+  padding-bottom: 4px;
+  -webkit-overflow-scrolling: touch;
+}
+
+.strip::-webkit-scrollbar { display: none; }
+
+.card {
+  scroll-snap-align: start;
+  flex-shrink: 0;
+  width: 64px;
+  height: 76px;
+  border-radius: var(--radius-lg);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  cursor: pointer;
+  transition: transform var(--transition-fast), box-shadow var(--transition-fast);
+  border: 2px solid transparent;
+}
+
+.card:hover { transform: translateY(-2px); box-shadow: var(--shadow-md); }
+
+.cardPaid    { background: var(--success); border-color: #059669; }
+.cardOverdue { background: var(--danger);  border-color: #dc2626; }
+.cardDueSoon { background: var(--warning); border-color: #d97706; }
+.cardUnpaid  { background: var(--neutral-bg); border-color: var(--border-color); }
+
+.month {
+  font-family: var(--font-display);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+}
+
+.cardPaid .month, .cardOverdue .month, .cardDueSoon .month { color: #fff; }
+.cardUnpaid .month { color: var(--text-muted); }
+
+.amount {
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+}
+
+.cardPaid .amount, .cardOverdue .amount, .cardDueSoon .amount { color: rgba(255,255,255,0.85); }
+.cardUnpaid .amount { color: var(--text-muted); }
+
+/* Desktop wider cards */
+@media (min-width: 1024px) {
+  .card { width: 80px; height: 92px; }
+  .month { font-size: 15px; }
+  .amount { font-size: 10px; }
+}

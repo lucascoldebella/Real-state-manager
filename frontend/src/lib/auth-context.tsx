@@ -4,7 +4,7 @@ import React, { createContext, useContext, useEffect, useMemo, useState } from '
 import { clearStoredSession, fetchMe, getStoredToken, getStoredUser, loginRequest, logoutRequest, setStoredSession } from './api';
 import type { AuthUser } from './types';
 
-export type AccessModule = 'dashboard' | 'properties' | 'tenants' | 'finance' | 'documents' | 'settings';
+export type AccessModule = 'dashboard' | 'properties' | 'tenants' | 'finance' | 'documents' | 'settings' | 'clients';
 
 interface AuthContextValue {
   user: AuthUser | null;

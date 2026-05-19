@@ -28,6 +28,7 @@ export interface AuthPermissions {
   finance: boolean;
   documents: boolean;
   settings: boolean;
+  clients: boolean;
 }
 
 export interface AuthUser {
@@ -204,6 +205,94 @@ export interface FinanceAnalytics {
     paid: number;
     unpaid: number;
   };
+}
+
+export interface ClientUser {
+  id: number;
+  full_name: string;
+  email: string;
+  unit_id: number;
+}
+
+export interface ClientAuthResponse {
+  token: string;
+  token_type: string;
+  expires_in_hours: number;
+  user: ClientUser;
+}
+
+export type TicketStatus = 'open' | 'in_progress' | 'resolved' | 'closed';
+export type TicketCategory = 'moveis' | 'eletrica' | 'hidraulica' | 'outros';
+export type TicketSubcategory = 'cama' | 'fogao' | 'geladeira' | 'outros' | '';
+
+export interface TicketFile {
+  id: number;
+  mime_type: string;
+  file_size: number;
+  original_name: string;
+  created_at: string;
+}
+
+export interface Ticket {
+  id: number;
+  category: TicketCategory;
+  subcategory: TicketSubcategory;
+  description: string;
+  status: TicketStatus;
+  admin_notes: string;
+  created_at: string;
+  updated_at: string;
+  files?: TicketFile[];
+  tenant_name?: string;
+  tenant_email?: string;
+  unit_number?: string;
+  tenant_id?: number;
+  file_count?: number;
+}
+
+export type ComplaintStatus = 'new' | 'reviewed' | 'archived';
+
+export interface Complaint {
+  id: number;
+  body: string;
+  status: ComplaintStatus;
+  admin_notes: string;
+  created_at: string;
+}
+
+export interface PaymentStripItem {
+  month: string;
+  amount: number;
+  status: string;
+  paid_at: string;
+  due_date: string;
+}
+
+export interface ClientDashboard {
+  unit: { unit_number: string; base_rent: number; rent_amount: number; due_day: string };
+  contract: { start: string; end: string };
+  next_due: { month: string; amount: number; status: string; due_date: string } | null;
+  payment_strip: PaymentStripItem[];
+  open_tickets: number;
+}
+
+export interface Notice {
+  id: number;
+  title: string;
+  body: string;
+  active?: boolean;
+  created_by?: number;
+  created_at: string;
+}
+
+export interface ClientNotification {
+  id: number;
+  type: string;
+  title: string;
+  message: string;
+  related_id: number;
+  read: boolean;
+  created_at: string;
 }
 
 export interface FinanceIntelligence {

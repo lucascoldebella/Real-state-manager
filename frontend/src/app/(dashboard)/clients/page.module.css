@@ -1,0 +1,32 @@
+.container {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  overflow-x: hidden;
+}
+
+.header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 16px;
+}
+
+.headerTitle {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.headerTitle h2 {
+  font-size: 1.75rem;
+  color: var(--text-main);
+  margin: 0;
+  font-weight: 700;
+}
+
+.headerTitle p {
+  color: var(--text-muted);
+  font-size: 1rem;
+  margin: 0;
+}

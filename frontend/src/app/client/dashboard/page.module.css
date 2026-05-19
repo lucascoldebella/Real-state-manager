@@ -1,0 +1,111 @@
+.page { display: flex; flex-direction: column; gap: 20px; }
+
+.greeting { font-family: var(--font-display); font-size: 22px; font-weight: 700; color: var(--text-main); }
+.greetingSub { font-size: 13px; color: var(--text-muted); margin-top: 2px; }
+
+.card {
+  background: var(--bg-card);
+  border-radius: var(--radius-lg);
+  padding: 18px;
+  box-shadow: var(--shadow-card);
+}
+
+.cardTitle {
+  font-family: var(--font-display);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+  letter-spacing: 0.8px;
+  text-transform: uppercase;
+  margin-bottom: 12px;
+}
+
+.dueBanner {
+  background: var(--danger);
+  color: #fff;
+  border-radius: var(--radius-lg);
+  padding: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.dueBannerPaid {
+  background: var(--success);
+  color: #fff;
+  border-radius: var(--radius-lg);
+  padding: 16px 18px;
+}
+
+.dueBannerAmount {
+  font-family: var(--font-display);
+  font-size: 26px;
+  font-weight: 700;
+}
+
+.dueBannerLabel {
+  font-size: 12px;
+  opacity: 0.85;
+  margin-top: 2px;
+}
+
+.dueBannerMonth {
+  font-size: 15px;
+  font-weight: 600;
+  opacity: 0.9;
+}
+
+.statsRow {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.stat {
+  background: var(--bg-card);
+  border-radius: var(--radius-lg);
+  padding: 16px;
+  box-shadow: var(--shadow-card);
+}
+
+.statValue {
+  font-family: var(--font-display);
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--text-main);
+  margin-bottom: 2px;
+}
+
+.statLabel { font-size: 11px; color: var(--text-muted); font-weight: 500; text-transform: uppercase; letter-spacing: 0.5px; }
+
+.quickLinks {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.quickLink {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 16px 12px;
+  background: var(--bg-card);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 600;
+  text-decoration: none;
+  transition: all var(--transition-fast);
+  border: 1.5px solid var(--border-color);
+}
+
+.quickLink:hover { border-color: var(--primary); color: var(--primary); transform: translateY(-2px); box-shadow: var(--shadow-card-hover); }
+.quickLink svg { color: var(--primary); }
+
+@media (min-width: 1024px) {
+  .statsRow { grid-template-columns: repeat(4, 1fr); }
+  .quickLinks { grid-template-columns: repeat(4, 1fr); }
+}

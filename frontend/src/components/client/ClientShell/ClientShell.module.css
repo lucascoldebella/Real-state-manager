@@ -1,0 +1,290 @@
+.shell {
+  display: flex;
+  flex-direction: column;
+  min-height: 100dvh;
+  background: var(--bg-main);
+}
+
+/* ── Mobile sidebar hidden by default ── */
+.sidebar { display: none; }
+
+/* ── Mobile topbar ── */
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 16px;
+  height: 56px;
+  background: var(--bg-card);
+  border-bottom: 1px solid var(--border-color);
+}
+
+.topbarBrand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.topbarLogo {
+  width: 32px;
+  height: 32px;
+  background: var(--primary);
+  border-radius: var(--radius-md);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 14px;
+}
+
+.topbarTitle {
+  font-family: var(--font-display);
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-main);
+}
+
+.topbarActions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.notifBtn {
+  position: relative;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--text-muted);
+  padding: 6px;
+  border-radius: var(--radius-sm);
+  display: flex;
+  align-items: center;
+  text-decoration: none;
+}
+
+.notifDot {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 8px;
+  height: 8px;
+  background: var(--danger);
+  border-radius: 50%;
+  border: 2px solid var(--bg-card);
+}
+
+.main {
+  flex: 1;
+  padding: 16px;
+  padding-bottom: 84px;
+}
+
+.bottomNav {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 50;
+  display: flex;
+  background: var(--bg-card);
+  border-top: 1px solid var(--border-color);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+  box-shadow: 0 -4px 12px rgba(0, 0, 0, 0.04);
+}
+
+.navItem {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  padding: 8px 4px;
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 500;
+  text-decoration: none;
+  transition: color var(--transition-fast);
+}
+
+.navItem.active {
+  color: var(--primary);
+}
+
+.navItem svg {
+  width: 22px;
+  height: 22px;
+}
+
+.contentArea { flex: 1; min-width: 0; }
+
+/* ── Desktop (≥1024px) ── */
+@media (min-width: 1024px) {
+  .shell {
+    flex-direction: row;
+  }
+
+  .topbar { display: none; }
+  .bottomNav { display: none; }
+
+  .sidebar {
+    display: flex;
+    width: 248px;
+    min-height: 100dvh;
+    height: 100dvh;
+    background: var(--bg-card);
+    border-right: 1px solid var(--border-color);
+    flex-direction: column;
+    position: sticky;
+    top: 0;
+    overflow-y: auto;
+    padding: 24px 0 16px;
+    flex-shrink: 0;
+  }
+
+  .sidebarBrand {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 0 20px 24px;
+    border-bottom: 1px solid var(--border-color);
+    margin-bottom: 16px;
+  }
+
+  .sidebarLogo {
+    width: 40px;
+    height: 40px;
+    background: var(--primary);
+    border-radius: var(--radius-md);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #fff;
+    font-family: var(--font-display);
+    font-weight: 700;
+    font-size: 16px;
+    flex-shrink: 0;
+    box-shadow: 0 2px 8px color-mix(in oklab, var(--primary) 30%, transparent);
+  }
+
+  .sidebarBrandText {
+    font-family: var(--font-display);
+    font-size: 15px;
+    font-weight: 700;
+    color: var(--text-main);
+    line-height: 1.2;
+  }
+  .sidebarBrandSub {
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-top: 3px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+
+  .sidebarSectionLabel {
+    display: block;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.8px;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    padding: 0 16px;
+    margin: 4px 0 8px;
+  }
+
+  .sidebarNav {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 0 12px;
+  }
+
+  .sidebarItem {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 14px;
+    border-radius: var(--radius-md);
+    color: var(--text-muted);
+    font-size: 14px;
+    font-weight: 500;
+    text-decoration: none;
+    transition: all var(--transition-fast);
+    position: relative;
+  }
+
+  .sidebarItem svg { flex-shrink: 0; }
+  .sidebarItem span { flex: 1; }
+
+  .sidebarItem:hover {
+    background: var(--bg-main);
+    color: var(--text-main);
+  }
+  .sidebarItem.active {
+    background: var(--primary-light);
+    color: var(--primary-text);
+    font-weight: 600;
+  }
+
+  .sidebarFooter {
+    padding: 12px;
+    border-top: 1px solid var(--border-color);
+    margin-top: auto;
+  }
+
+  .sidebarUser {
+    padding: 10px 14px;
+    background: var(--bg-main);
+    border-radius: var(--radius-md);
+    margin-bottom: 8px;
+  }
+  .sidebarUserName {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-main);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .sidebarUserEmail {
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-top: 2px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .logoutBtn {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 14px;
+    border-radius: var(--radius-md);
+    color: var(--text-muted);
+    font-size: 14px;
+    font-weight: 500;
+    background: none;
+    border: none;
+    cursor: pointer;
+    width: 100%;
+    transition: all var(--transition-fast);
+  }
+  .logoutBtn:hover { background: var(--danger-bg); color: var(--danger); }
+
+  .main {
+    padding: 32px 40px;
+    padding-bottom: 32px;
+    max-width: 1080px;
+    margin: 0 auto;
+    width: 100%;
+  }
+}
